@@ -199,24 +199,25 @@ em_tabular <- function(dat, nS, gamma, max_iter = 100, tol = 1e-4) {
 # ==============================================================================
 # 5. Solve for density ratio omega (tabular)
 # ==============================================================================
-solve_omega_tabular <- function(em_out, dgp, gamma) {
+solve_omega_tabular <- function(em_out, dat, dgp, gamma) {
   nS  <- dgp$nS
   pi  <- dgp$pi_policy          # pi(1|s)
   p_e <- dgp$p_e
+  S   <- as.vector(dat$S)
 
   ## Helper: (s,a) -> flat index among nS*2 entries
   sa <- function(s, a) a * nS + s          # a∈{0,1}
 
   dim_sa <- nS * 2
 
-  ## Solve for discounted visitation p*(s,a) under pi
-  ##   p*(s,a) = (1-γ) p_e(s) π(a|s) + γ Σ_{s',a'} p*(s',a') P̂(s|s',a') π(a|s)
-  build_system <- function(pol, P) {
+  ## Solve for discounted visitation d^pi(s,a)
+  ##   d^pi(s,a) = (1-γ) p_e(s) π(a|s) + γ Σ_{s',a'} d^pi(s',a') P̂(s|s',a') π(a|s)
+  build_discounted_target <- function(P) {
     A <- diag(dim_sa)
     b <- numeric(dim_sa)
     for (s in 1:nS) for (a in 0:1) {
       i <- sa(s, a)
-      pa <- ifelse(a == 1, pol[s], 1 - pol[s])
+      pa <- ifelse(a == 1, pi[s], 1 - pi[s])
       b[i] <- (1 - gamma) * p_e[s] * pa
       for (sp in 1:nS) for (ap in 0:1)
         A[i, sa(sp, ap)] <- A[i, sa(sp, ap)] - gamma * P[sp, s, ap + 1] * pa
@@ -224,11 +225,21 @@ solve_omega_tabular <- function(em_out, dgp, gamma) {
     pmax(solve(A, b), 1e-10)
   }
 
-  p_star <- build_system(pi, em_out$P_hat)
-  p_b    <- build_system(em_out$b_hat, em_out$P_hat)
+  ## Estimate \bar p_T^b(s,a) from the pooled offline data distribution.
+  ## Since A is latent, use EM responsibilities eta_it(a) as soft counts.
+  p_bar_b <- numeric(dim_sa)
+  for (i in seq_along(S)) {
+    s <- S[i]
+    for (a in 0:1) p_bar_b[sa(s, a)] <- p_bar_b[sa(s, a)] + em_out$eta[i, a + 1]
+  }
+  p_bar_b <- p_bar_b / length(S)
+  p_bar_b <- pmax(p_bar_b, 1e-10)
+  p_bar_b <- p_bar_b / sum(p_bar_b)
+
+  d_pi <- build_discounted_target(em_out$P_hat)
 
   omega <- matrix(0, nS, 2)
-  for (s in 1:nS) for (a in 0:1) omega[s, a + 1] <- p_star[sa(s, a)] / p_b[sa(s, a)]
+  for (s in 1:nS) for (a in 0:1) omega[s, a + 1] <- d_pi[sa(s, a)] / p_bar_b[sa(s, a)]
   omega
 }
 
@@ -270,7 +281,7 @@ mr_estimator <- function(dat, dgp, gamma, K = NULL) {
   em <- em_tabular(dat, nS, gamma)
 
   ## Nuisance functions
-  omega <- solve_omega_tabular(em, dgp, gamma)
+  omega <- solve_omega_tabular(em, dat, dgp, gamma)
   Q     <- solve_Q_tabular(em, dgp, gamma)
   V     <- (1 - pi) * Q[, 1] + pi * Q[, 2]
 
