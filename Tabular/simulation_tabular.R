@@ -2,13 +2,18 @@
 ## Tabular MDP Simulation — "Learning from the Unseen"
 ##
 ## DGP: |S|=3, A in {0,1}, gamma=0.9, with hidden actions
-## Competing methods (FQE, MIS, DRL) loaded from Methods.R
+## Competing methods (FQE, SIS, MIS, DRL, LSTD) loaded from Methods.R
 ## Our method: multiply robust (MR) estimator with EM-style nuisance estimation
 ################################################################################
 
 source("Methods.R")
 library(rpart)
 library(dplyr)
+gamma <- 0.6
+N <- 50
+TT <- 50
+n_rep <- 100
+epsilon_grid <- c(0.05, 0.1, 0.2,0.3)
 
 summarize_results <- function(results, V_true) {
   results %>%
@@ -21,11 +26,12 @@ summarize_results <- function(results, V_true) {
       .groups = "drop"
     ) %>%
     # Ensure the output matches your original sorting/method order
-    mutate(method = factor(method, levels = c("FQE", "SIS", "MIS", "DRL", "MR"))) %>%
+    mutate(method = factor(method, levels = c("FQE", "SIS", "MIS", "DRL", "LSTD", "MR"))) %>%
     arrange(epsilon, method)
 }
+
 run_full_simulation <- function(dgp, N, TT, epsilon_grid, gamma, n_rep) {
-	methods <- c("FQE", "SIS", "MIS", "DRL", "MR")
+	  methods <- c("FQE", "SIS", "MIS", "DRL", "LSTD", "MR")
 	V_true <- compute_true_value(dgp, gamma)$V_value
 
 	results <- data.frame(
@@ -36,6 +42,11 @@ run_full_simulation <- function(dgp, N, TT, epsilon_grid, gamma, n_rep) {
 		stringsAsFactors = FALSE
 	)
 
+	## LURE CI coverage tracking (TRUE/FALSE)
+	ci_results <- data.frame(rep = integer(0), epsilon = numeric(0),
+	                         covers = logical(0),
+	                         stringsAsFactors = FALSE)
+
 	for (eps in epsilon_grid) {
 		cat("Running epsilon =", eps, "with", n_rep, "replications\n")
 		for (rep in seq_len(n_rep)) {
@@ -45,15 +56,26 @@ run_full_simulation <- function(dgp, N, TT, epsilon_grid, gamma, n_rep) {
 			}
 
 			est <- one_rep(dgp, N = N, TT = TT, epsilon = eps, gamma = gamma)
+
+      ## Store point estimates
+      est_methods <- est[c("FQE", "SIS", "MIS", "DRL", "LSTD", "MR")]
 			results <- rbind(
 				results,
 				data.frame(
 					rep = rep,
 					epsilon = eps,
-					method = names(est),
-					estimate = as.numeric(est),
+					method = names(est_methods),
+					estimate = as.numeric(est_methods),
 					stringsAsFactors = FALSE
 				)
+			)
+
+			## Store LURE CI coverage
+			ci_results <- rbind(
+				ci_results,
+				data.frame(rep = rep, epsilon = eps,
+				           covers = est["MR_ci_lo"] <= V_true & V_true <= est["MR_ci_hi"],
+				           stringsAsFactors = FALSE)
 			)
 		}
 	}
@@ -61,9 +83,19 @@ run_full_simulation <- function(dgp, N, TT, epsilon_grid, gamma, n_rep) {
 	summary <- summarize_results(results, V_true)
 	summary <- summary[order(summary$epsilon, match(summary$method, methods)), ]
 
+	## LURE coverage
+	coverage <- ci_results %>%
+	  group_by(epsilon) %>%
+	  summarize(coverage = mean(covers, na.rm = TRUE),
+	            .groups = "drop")
+	cat("\n--- LURE 95% CI Coverage ---\n")
+	print(as.data.frame(coverage))
+
 	list(
 		results = results,
 		summary = summary,
+		coverage = coverage,
+		ci_results = ci_results,
 		V_true = V_true,
 		N = N,
 		TT = TT,
@@ -73,11 +105,6 @@ run_full_simulation <- function(dgp, N, TT, epsilon_grid, gamma, n_rep) {
 }
 
 dgp <- generate_dgp()
-gamma <- 0.6
-N <- 40
-TT <- 40
-n_rep <- 100
-epsilon_grid <- c(0.05, 0.15, 0.3)
 
 sim_out <- run_full_simulation(dgp = dgp,N = N,TT = TT,epsilon_grid = epsilon_grid,
                                gamma = gamma,n_rep = n_rep)
@@ -93,11 +120,12 @@ plot_simulation_results <- function(results, V_true, N, TT, n_rep) {
   
   # Color palette with LURE first
   method_cols <- c(
-    "LURE" = "deepskyblue",
-    "FQE"  = "#4E79A7",
-    "SIS"  = "#F28E2B",
-    "MIS"  = "#59A14F",
-    "DRL"  = "#E15759"
+    "LURE"   = "deepskyblue",
+    "FQE"    = "#59A14F",
+    "SIS"    = "#4E79A7",
+    "MIS"    = "deeppink",
+    "DRL"    = "#E15759",
+    "LSTD"   = "#F28E2B"
   )
   
   # Fix method order (controls x-axis order)
@@ -142,7 +170,7 @@ plot_simulation_results <- function(results, V_true, N, TT, n_rep) {
     coord_cartesian(ylim = c(y_min - padding, y_max + padding)) +
     
     labs(
-      y = "Estimated Value",
+      y = "Empirical Value",
       x = NULL
     ) +
     
@@ -171,3 +199,8 @@ plot_simulation_results(
 
 save(sim_out, file = "res.RData")
 
+library(dplyr)
+
+sim_out$ci_results %>%
+  group_by(epsilon) %>%
+  summarize(mean_cover = round(mean(covers), 2))

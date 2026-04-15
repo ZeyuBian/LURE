@@ -390,34 +390,150 @@ DRL <- function(S, A, R, H, pi1, phi = NULL, gamma,
 # ==============================================================================
 # SIS — Sequential Importance Sampling
 # ==============================================================================
-SIS <- function(S_mat, A_mat, R_mat, pi1, gamma, b_hat = NULL) {
+SIS <- function(S_mat, A_mat, R_mat, pi1, gamma, b_hat = NULL,
+                min_prob = 0.05, max_ratio = 8, max_weight = 20,
+                normalize = TRUE) {
   # S_mat, A_mat, R_mat: N x T matrices (one row per trajectory)
+  S_mat <- as.matrix(S_mat)
+  A_mat <- as.matrix(A_mat)
+  R_mat <- as.matrix(R_mat)
+
   N  <- nrow(S_mat)
   TT <- ncol(S_mat)
 
-  # Estimate behavior policy from data if not supplied
-  if (is.null(b_hat)) {
-    Sv <- as.vector(S_mat); Av <- as.vector(A_mat)
-    states <- sort(unique(Sv))
-    b_hat <- numeric(max(states))
-    for (s in states) b_hat[s] <- mean(Av[Sv == s])
-    b_hat <- pmax(pmin(b_hat, 0.99), 0.01)
+  if (!all(dim(A_mat) == c(N, TT)) || !all(dim(R_mat) == c(N, TT))) {
+    stop("S_mat, A_mat, and R_mat must have identical dimensions.")
   }
 
-  total <- 0
-  for (i in 1:N) {
-    w <- 1
-    for (t in 1:TT) {
-      s  <- S_mat[i, t]
-      a  <- A_mat[i, t]
-      pi_a <- .resolve_pi(pi1, s)
-      pi_a <- ifelse(a == 1, pi_a, 1 - pi_a)
-      b_a  <- ifelse(a == 1, b_hat[s], 1 - b_hat[s])
-      w <- w * (pi_a / b_a)
-      total <- total + w * gamma^(t - 1) * R_mat[i, t]
+  # Estimate behavior policy from pooled data if not supplied.
+  if (is.null(b_hat)) {
+    Sv <- as.vector(S_mat)
+    Av <- as.vector(A_mat)
+    state_levels <- sort(unique(Sv))
+    b_lookup <- tapply(Av, factor(Sv, levels = state_levels), mean)
+    names(b_lookup) <- as.character(state_levels)
+  } else {
+    b_lookup <- b_hat
+    if (!is.function(b_lookup) && is.null(names(b_lookup))) {
+      names(b_lookup) <- as.character(seq_along(b_lookup))
     }
   }
-  total / N
+
+  get_b1 <- function(s) {
+    if (is.function(b_hat)) {
+      b1 <- b_hat(s)
+    } else {
+      key <- as.character(s)
+      if (key %in% names(b_lookup)) {
+        b1 <- unname(b_lookup[key])
+      } else if (is.numeric(s) && s >= 1 && s <= length(b_lookup)) {
+        b1 <- b_lookup[as.integer(s)]
+      } else {
+        stop("Missing behavior-policy estimate for at least one observed state.")
+      }
+    }
+    pmax(pmin(b1, 1 - min_prob), min_prob)
+  }
+
+  cum_w <- matrix(1, nrow = N, ncol = TT)
+  for (t in seq_len(TT)) {
+    s_t <- S_mat[, t]
+    a_t <- A_mat[, t]
+
+    p1_t <- .resolve_pi(pi1, s_t)
+    pi_a <- ifelse(a_t == 1, p1_t, 1 - p1_t)
+    b1_t <- vapply(s_t, get_b1, numeric(1))
+    b_a  <- ifelse(a_t == 1, b1_t, 1 - b1_t)
+
+    step_ratio <- pi_a / b_a
+    step_ratio[!is.finite(step_ratio)] <- max_ratio
+    step_ratio <- pmin(step_ratio, max_ratio)
+
+    if (t == 1) {
+      cum_w[, t] <- pmin(step_ratio, max_weight)
+    } else {
+      cum_w[, t] <- pmin(cum_w[, t - 1] * step_ratio, max_weight)
+    }
+  }
+
+  gamma_t <- gamma^(seq_len(TT) - 1L)
+  if (normalize) {
+    est_t <- numeric(TT)
+    for (t in seq_len(TT)) {
+      denom <- sum(cum_w[, t])
+      if (!is.finite(denom) || denom <= 0) next
+      est_t[t] <- sum(cum_w[, t] * R_mat[, t]) / denom
+    }
+    return(sum(gamma_t * est_t))
+  }
+
+  mean(rowSums(cum_w * matrix(gamma_t, nrow = N, ncol = TT, byrow = TRUE) * R_mat))
+}
+
+# ==============================================================================
+# LSTD — Least-Squares Temporal Difference (tabular)
+# ==============================================================================
+LSTD <- function(S, A, R, H, pi1, gamma, ridge = 1e-6) {
+  S <- .coerce_tabular_state(S)
+  N <- length(A) / H
+
+  state_levels <- sort(unique(S))
+  state_labels <- as.character(state_levels)
+  nS <- length(state_levels)
+  nA <- 2
+  d  <- nS * nA
+
+  state_to_idx <- setNames(seq_along(state_levels), state_labels)
+
+  ## Feature vector φ(s,a): indicator in R^{nS*nA}
+  phi_vec <- function(s, a) {
+    v <- numeric(d)
+    v[(state_to_idx[as.character(s)] - 1L) * nA + (a + 1L)] <- 1
+    v
+  }
+
+  ## Build feature matrix for all observations
+  n <- length(A)
+  Phi_obs <- matrix(0, n, d)
+  for (i in seq_len(n)) {
+    Phi_obs[i, ] <- phi_vec(S[i], A[i])
+  }
+
+  ## Policy-averaged feature at next state: φ_π(s') = Σ_a π(a|s') φ(s',a)
+  ## Next-state indices: for t=1..H-1
+  idx_t   <- 1:((H - 1) * N)
+  idx_tp1 <- (N + 1):(H * N)
+
+  Phi_t <- Phi_obs[idx_t, , drop = FALSE]
+  R_t   <- R[idx_t]
+  S_tp1 <- S[idx_tp1]
+
+  pi_tp1 <- .resolve_pi(pi1, S_tp1)
+  PhiPi_tp1 <- matrix(0, length(idx_tp1), d)
+  for (i in seq_along(idx_tp1)) {
+    PhiPi_tp1[i, ] <- (1 - pi_tp1[i]) * phi_vec(S_tp1[i], 0) +
+                       pi_tp1[i]       * phi_vec(S_tp1[i], 1)
+  }
+
+  ## LSTD: A w = b
+  n_pairs <- length(idx_t)
+  A_mat <- crossprod(Phi_t, Phi_t - gamma * PhiPi_tp1) / n_pairs
+  b_vec <- drop(crossprod(Phi_t, R_t)) / n_pairs
+
+  w_hat <- solve(A_mat + ridge * diag(d), b_vec)
+
+  ## V_hat = (1/N) Σ_i V(s_{i,1})  where V(s) = Σ_a π(a|s) Q(s,a)
+  S_init  <- S[1:N]
+  pi_init <- .resolve_pi(pi1, S_init)
+  V_init  <- numeric(N)
+  for (i in 1:N) {
+    q0 <- sum(phi_vec(S_init[i], 0) * w_hat)
+    q1 <- sum(phi_vec(S_init[i], 1) * w_hat)
+    V_init[i] <- (1 - pi_init[i]) * q0 + pi_init[i] * q1
+  }
+  V_hat <- mean(V_init)
+
+  list(V_hat = V_hat, w = w_hat, states = state_levels)
 }
 
 # ==============================================================================
@@ -750,7 +866,7 @@ mr_estimator <- function(dat, dgp, gamma, K = NULL) {
   
   direct <- sum(dgp$p_e * V)
   
-  ## Evaluate IF on all data
+  ## Evaluate IF and IS on all data (single loop)
   phi_all <- numeric(N * TT)
   for (i in 1:N) for (t in 1:TT) {
     s  <- dat$S[i, t]
@@ -780,17 +896,16 @@ mr_estimator <- function(dat, dgp, gamma, K = NULL) {
       T1 <- T1 + gap * omega[s, a + 1] * (r  - tR[s, a + 1])
       T2 <- T2 + ga  * omega[s, a + 1] * (V[sp] - MV[s, a + 1])
     }
-    phi_all[(i - 1) * TT + t] <- T1 / (1 - gamma) + T2 * gamma / (1 - gamma)
+    idx <- (i - 1) * TT + t
+    phi_all[idx] <- T1 / (1 - gamma) + T2 * gamma / (1 - gamma)
   }
   
   V_hat <- direct + mean(phi_all)
-  # se    <- sqrt(var(phi_all) / (N * TT))
-  
-  list(V_hat = V_hat)
-  
-  # list(V_hat = V_hat, se = se,
-  #      ci_lo = V_hat - 1.96 * se,
-  #      ci_hi = V_hat + 1.96 * se)
+  se    <- sqrt(var(phi_all) / (N * TT))
+
+  list(V_hat = V_hat, se = se,
+       ci_lo = V_hat - 1.96 * se,
+       ci_hi = V_hat + 1.96 * se)
 }
 
 # ==============================================================================
@@ -833,6 +948,13 @@ one_rep <- function(dgp, N, TT, epsilon, gamma) {
   }
   
   st <- stack_for_methods(dat)
+
+  ## --- clipped SIS ---
+  V_sis <- tryCatch(
+    SIS(S_mat = dat$S, A_mat = dat$Atilde, R_mat = dat$R,
+        pi1 = pi1_func, gamma = gamma),
+    error = function(e) NA_real_
+  )
   
   ## --- naive baselines (FQE, MIS, DRL via Methods.R) ---
   V_fqe <- V_mis <- V_drl <- NA
@@ -847,24 +969,28 @@ one_rep <- function(dgp, N, TT, epsilon, gamma) {
     V_drl <- out$Vhat_DRL
   }, error = function(e) NULL)
   
-  ## --- SIS via Methods.R ---
-  V_sis <- tryCatch(
-    SIS(dat$S, dat$Atilde, dat$R, pi1 = pi1_func, gamma = gamma),
+  ## --- naive LSTD ---
+  V_lstd <- tryCatch(
+    LSTD(S = st$S, A = st$A, R = st$R, H = st$H,
+         pi1 = pi1_func, gamma = gamma)$V_hat,
     error = function(e) NA
   )
   
   ## --- our MR estimator ---
   mr <- tryCatch(
     mr_estimator(dat, dgp, gamma, K = 5),
-    error = function(e) list(V_hat = NA, se = NA, ci_lo = NA, ci_hi = NA)
+    error = function(e) list(V_hat = NA, ci_lo = NA, ci_hi = NA)
   )
   
   c(
-    FQE   = V_fqe,
-    SIS   = V_sis,
-    MIS   = V_mis,
-    DRL   = V_drl,
-    MR    = mr$V_hat
+    FQE      = V_fqe,
+    SIS      = V_sis,
+    MIS      = V_mis,
+    DRL      = V_drl,
+    LSTD     = V_lstd,
+    MR       = mr$V_hat,
+    MR_ci_lo = mr$ci_lo,
+    MR_ci_hi = mr$ci_hi
   )
 }
 
