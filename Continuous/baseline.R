@@ -2,7 +2,7 @@
 # ==============================================================================
 # 8. Naive FQE (treats surrogate as true action, 2D state)
 # ==============================================================================
-naive_fqe_continuous <- function(dat, dgp, gamma, n_iter = 50) {
+naive_fqe_continuous <- function(dat, dgp, gamma, n_iter = 20) {
   S1_vec  <- as.vector(dat$S1)
   S2_vec  <- as.vector(dat$S2)
   At_vec  <- as.vector(dat$Atilde)
@@ -55,7 +55,7 @@ naive_fqe_continuous <- function(dat, dgp, gamma, n_iter = 50) {
 # 9. Naive MIS (treats surrogate as true action, 2D state)
 # ==============================================================================
 naive_mis_continuous <- function(dat, dgp, gamma,
-                                 basis_deg = 2, ridge = 1e-6) {
+                                 basis_deg = 2, ridge = 0.005) {
   S1_vec  <- as.vector(dat$S1)
   S2_vec  <- as.vector(dat$S2)
   At_vec  <- as.vector(dat$Atilde)
@@ -215,7 +215,7 @@ naive_sis_continuous <- function(dat, dgp, gamma,
 # 12. Naive LSTD (treats surrogate as true action, 2D state)
 # ==============================================================================
 naive_lstd_continuous <- function(dat, dgp, gamma,
-                                  basis_deg = 2, ridge = 1e-6) {
+                                  basis_deg = 2, ridge = 0.005) {
   S1_vec  <- as.vector(dat$S1)
   S2_vec  <- as.vector(dat$S2)
   At_vec  <- as.vector(dat$Atilde)

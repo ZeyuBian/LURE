@@ -12,9 +12,8 @@
 expit  <- function(x) 1 / (1 + exp(-x))
 clip   <- function(x, lo = 1e-2, hi = 1 - 1e-2) pmax(pmin(x, hi), lo)
 
-safe_ratio <- function(num, denom, eps = 1e-3) {
-  denom <- ifelse(abs(denom) < eps, sign(denom + 1e-3) * eps, denom)
-  num / denom
+safe_ratio <- function(num, denom, lambda = 0.005) {
+  num * denom / (denom^2 + lambda)
 }
 
 clip_abs_quantile <- function(x, q = 0.97) {
@@ -35,13 +34,13 @@ draw_initial_states <- function(dgp, n) {
 # ==============================================================================
 generate_dgp_continuous <- function(
     sigma_tr = 0.5,          ## Transition noise sd (variance = 0.25)
-    sigma_R  = 0.5,          ## Reward noise sd (independent of transition)
+    sigma_R  = 1,          ## Reward noise sd (independent of transition)
     b_prob   = 0.5,          ## Behavior policy: b(1|s) = 0.5 (constant)
-    tr_shift = 3 / 4,        ## Common action shift in transitions
-    s1_a_int = 0.4,          ## S1 transition action-state interaction
-    s2_a_int = -0.3,         ## S2 transition action-state interaction
-    init_mean = c(0.25, 0.05), ## Initial-state mean
-    init_sd   = c(0.75, 0.75), ## Initial-state sd
+    tr_shift = 3 / 5,        ## Common action shift in transitions
+    s1_a_int = 0.5,          ## S1 transition action-state interaction
+    s2_a_int = -0.5,         ## S2 transition action-state interaction
+    init_mean = c(0.5, -0.5), ## Initial-state mean
+    init_sd   = c(1, 1), ## Initial-state sd
     ## Target policy: pi_2(1|s) = I(s1<=0, s2<=0)
     pi_func  = function(s1, s2) as.numeric(s1 >= 0.25 & s2 >= -0.10)
 ) {
@@ -145,7 +144,7 @@ generate_data_continuous <- function(dgp, N, TT, epsilon) {
     ## ---- M-step ----
     fit_b <- lm(eta1 ~ s1 + s2,
                 data = cbind(data.frame(eta1 = eta[, 2]), df_s))
-    b_hat <- clip(fitted(fit_b), 0.03, 0.97)
+    b_hat <- clip(fitted(fit_b), 0.02, 0.98)
 
     fit_mu0 <- glm(at ~ s1 + s2, family = quasibinomial(),
                    weights = pmax(eta[, 1], 1e-8),
@@ -153,8 +152,8 @@ generate_data_continuous <- function(dgp, N, TT, epsilon) {
     fit_mu1 <- glm(at ~ s1 + s2, family = quasibinomial(),
                    weights = pmax(eta[, 2], 1e-8),
                    data = cbind(data.frame(at = At_vec), df_s))
-    mu_hat_0 <- clip(fitted(fit_mu0, type = "response"), 0.03, 0.97)
-    mu_hat_1 <- clip(fitted(fit_mu1, type = "response"), 0.03, 0.97)
+    mu_hat_0 <- clip(fitted(fit_mu0, type = "response"), 0.02, 0.98)
+    mu_hat_1 <- clip(fitted(fit_mu1, type = "response"), 0.02, 0.98)
 
     ## Reward models
     fit_R0 <- lm(r ~ s1 + s2, weights = pmax(eta[, 1], 1e-8),
@@ -215,7 +214,7 @@ generate_data_continuous <- function(dgp, N, TT, epsilon) {
        fit_mu0 = fit_mu0, fit_mu1 = fit_mu1, fit_b = fit_b)
 }
 
-em_continuous <- function(dat, gamma, max_iter = 120, tol = 1e-3,
+em_continuous <- function(dat, gamma, max_iter = 100, tol = 1e-3,
                            n_restarts = 2) {
   S1_vec  <- as.vector(dat$S1)
   S2_vec  <- as.vector(dat$S2)
@@ -283,11 +282,11 @@ em_continuous <- function(dat, gamma, max_iter = 120, tol = 1e-3,
   predict_mu <- function(s1_new, s2_new, a) {
     fit <- if (a == 0) fit_mu0 else fit_mu1
     clip(predict(fit, newdata = data.frame(s1 = s1_new, s2 = s2_new),
-                 type = "response"), 0.03, 0.97)
+                 type = "response"), 0.02, 0.98)
   }
   predict_b <- function(s1_new, s2_new) {
     clip(predict(fit_b, newdata = data.frame(s1 = s1_new, s2 = s2_new)),
-         0.03, 0.97)
+         0.02, 0.98)
   }
 
   list(eta = eta, n_iter = best$n_iter,
@@ -305,7 +304,7 @@ em_continuous <- function(dat, gamma, max_iter = 120, tol = 1e-3,
 # ==============================================================================
 # 5. Density-ratio estimation (linear features, moment equation)
 # ==============================================================================
-solve_omega_continuous <- function(em_out, dat, dgp, gamma, ridge = 0.000001) {
+solve_omega_continuous <- function(em_out, dat, dgp, gamma, ridge = 0.001) {
   S1_vec  <- as.vector(dat$S1)
   S2_vec  <- as.vector(dat$S2)
   Sp1_vec <- as.vector(dat$Sp1)
@@ -433,7 +432,7 @@ subset_dat <- function(dat, row_idx) {
 # ==============================================================================
 compute_eta_outfold <- function(em, S1_te, S2_te, At_te, R_te, Sp1_te, Sp2_te) {
   n <- length(S1_te)
-  b_hat  <- clip(em$predict_b(S1_te, S2_te), 0.03, 0.97)
+  b_hat  <- clip(em$predict_b(S1_te, S2_te), 0.02, 0.98)
   mu_hat_0 <- em$predict_mu(S1_te, S2_te, 0)
   mu_hat_1 <- em$predict_mu(S1_te, S2_te, 1)
   tR0    <- em$predict_theta_R(S1_te, S2_te, 0)

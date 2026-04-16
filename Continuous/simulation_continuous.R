@@ -13,10 +13,10 @@ source("baseline.R")
 library(dplyr)
 library(ggplot2)
 
-gamma <- 0.6
+gamma <- 0.8
 N <- 50
 TT <- 50
-n_rep <- 100
+n_rep <- 20
 epsilon_grid <- c(0.05, 0.1, 0.2,0.3)
 
 # ==============================================================================
