@@ -127,9 +127,33 @@ def corrupt_label(action_bin: int, dataset: str, tau: float, rng: np.random.Gene
     return int(action_bin)
 
 
+def corrupt_action_labels(action_mat: np.ndarray, tau: float, seed: int) -> np.ndarray:
+    action_mat = np.asarray(action_mat, dtype=int)
+    rng = np.random.default_rng(seed)
+    flip_mask = rng.random(size=action_mat.shape) < tau
+    return np.where(flip_mask, 1 - action_mat, action_mat).astype(int)
+
+
+def derive_offline_dataset_from_oracle(oracle_payload: dict, tau: float, seed: int) -> dict:
+    if bool(oracle_payload.get("summary_only", False)):
+        raise ValueError("Oracle offline payload must include full trajectories.")
+    if "A" not in oracle_payload:
+        raise ValueError("Oracle offline payload must contain true actions A.")
+
+    payload = dict(oracle_payload)
+    payload["dataset"] = "offline"
+    payload["Atilde"] = corrupt_action_labels(payload["A"], tau=tau, seed=seed).tolist()
+    return payload
+
+
+def write_payload(payload: dict, output_path: Path) -> None:
+    output_path.write_text(json.dumps(payload), encoding="utf-8")
+
+
 def rollout_dataset(env_name: str, dataset: str, n_traj: int, horizon: int,
                     tau: float, gamma: float, seed: int,
-                    summary_only: bool = False):
+                    summary_only: bool = False,
+                    apply_label_noise: bool = True):
     rng = np.random.default_rng(seed)
     env = gym.make(env_name)
 
@@ -161,7 +185,10 @@ def rollout_dataset(env_name: str, dataset: str, n_traj: int, horizon: int,
                 S[i, t] = state_t
 
             action_bin = choose_action(dataset, env_name, state_t, rng)
-            observed_action = corrupt_label(action_bin, dataset, tau, rng)
+            if dataset == "offline" and not apply_label_noise:
+                observed_action = int(action_bin)
+            else:
+                observed_action = corrupt_label(action_bin, dataset, tau, rng)
             if not summary_only:
                 A[i, t] = action_bin
                 Atilde[i, t] = observed_action
@@ -236,7 +263,7 @@ def main() -> None:
     )
 
     output_path = Path(args.output)
-    output_path.write_text(json.dumps(payload), encoding="utf-8")
+    write_payload(payload, output_path)
 
 
 if __name__ == "__main__":

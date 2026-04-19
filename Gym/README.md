@@ -34,6 +34,11 @@ CartPole details:
 - The transition now uses the original deterministic CartPole dynamics plus additive Gaussian noise with standard deviation `0.1` on each next-state coordinate.
 - The reward is `1 - x^2 / 11.52 - theta^2 / 288` plus independent Gaussian noise with standard deviation `0.1`, where `x` is cart position and `theta` is pole angle.
 
+Bridge-state selection:
+
+- If `bridge_index` is left unspecified in `generate_gym_dgp()`, LURE now selects the bridge next-state coordinate by residual partial correlation: it regresses `Atilde` and each component of `S'` on the current state, then picks the coordinate with the largest absolute residual correlation.
+- Passing `bridge_index` still overrides the automatic selector.
+
 Dependencies:
 
 - Python: `gymnasium` or `gym`, and `numpy`

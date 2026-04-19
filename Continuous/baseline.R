@@ -215,7 +215,7 @@ naive_sis_continuous <- function(dat, dgp, gamma,
 # 12. Naive LSTD (treats surrogate as true action, 2D state)
 # ==============================================================================
 naive_lstd_continuous <- function(dat, dgp, gamma,
-                                  basis_deg = 2, ridge = 0.005) {
+                                  basis_deg = 2, ridge = 0.001) {
   S1_vec  <- as.vector(dat$S1)
   S2_vec  <- as.vector(dat$S2)
   At_vec  <- as.vector(dat$Atilde)

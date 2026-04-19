@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 
 import argparse
-import subprocess
-import sys
 from pathlib import Path
+
+from gym_data import derive_offline_dataset_from_oracle, rollout_dataset, write_payload
 
 
 def format_tau(tau: float) -> str:
@@ -13,6 +13,14 @@ def format_tau(tau: float) -> str:
 def format_gamma(gamma: float) -> str:
     out = f"{gamma:.6f}".rstrip("0").rstrip(".")
     return out
+
+
+def offline_oracle_seed(env_idx: int, rep: int) -> int:
+    return env_idx * 100000 + rep
+
+
+def offline_label_seed(env_idx: int, tau_idx: int, rep: int) -> int:
+    return env_idx * 100000 + tau_idx * 1000 + rep
 
 
 def main() -> None:
@@ -36,8 +44,6 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    script_dir = Path(__file__).resolve().parent
-    generator = script_dir / "gym_data.py"
     output_root = Path(args.output_dir)
     output_root.mkdir(parents=True, exist_ok=True)
 
@@ -51,60 +57,46 @@ def main() -> None:
             out_file = target_dir / (
                 f"N_{args.N}_T_{args.T}_gamma_{format_gamma(args.gamma)}_seed_{args.seed}.json"
             )
-            cmd = [
-                sys.executable,
-                str(generator),
-                "--env",
-                env_name,
-                "--dataset",
-                "target",
-                "--N",
-                str(args.N),
-                "--T",
-                str(args.T),
-                "--tau",
-                "0",
-                "--gamma",
-                str(args.gamma),
-                "--seed",
-                str(args.seed),
-                "--output",
-                str(out_file),
-            ]
-            if args.summary_only:
-                cmd.append("--summary-only")
-            subprocess.run(cmd, check=True)
+            payload = rollout_dataset(
+                env_name=env_name,
+                dataset="target",
+                n_traj=args.N,
+                horizon=args.T,
+                tau=0.0,
+                gamma=args.gamma,
+                seed=args.seed,
+                summary_only=args.summary_only,
+            )
+            write_payload(payload, out_file)
             print(f"generated {out_file}")
             continue
 
-        for tau_idx, tau in enumerate(args.taus, start=1):
+        tau_dirs = {}
+        for tau in args.taus:
             tau_dir = env_dir / f"tau_{format_tau(tau)}"
             tau_dir.mkdir(parents=True, exist_ok=True)
+            tau_dirs[tau] = tau_dir
 
-            for rep in range(1, args.n_rep + 1):
-                seed = env_idx * 100000 + tau_idx * 1000 + rep
-                out_file = tau_dir / f"rep_{rep:03d}.json"
-                cmd = [
-                    sys.executable,
-                    str(generator),
-                    "--env",
-                    env_name,
-                    "--dataset",
-                    args.dataset,
-                    "--N",
-                    str(args.N),
-                    "--T",
-                    str(args.T),
-                    "--tau",
-                    str(tau),
-                    "--gamma",
-                    str(args.gamma),
-                    "--seed",
-                    str(seed),
-                    "--output",
-                    str(out_file),
-                ]
-                subprocess.run(cmd, check=True)
+        for rep in range(1, args.n_rep + 1):
+            oracle_payload = rollout_dataset(
+                env_name=env_name,
+                dataset="offline",
+                n_traj=args.N,
+                horizon=args.T,
+                tau=0.0,
+                gamma=args.gamma,
+                seed=offline_oracle_seed(env_idx, rep),
+                apply_label_noise=False,
+            )
+
+            for tau_idx, tau in enumerate(args.taus, start=1):
+                out_file = tau_dirs[tau] / f"rep_{rep:03d}.json"
+                payload = derive_offline_dataset_from_oracle(
+                    oracle_payload,
+                    tau=tau,
+                    seed=offline_label_seed(env_idx, tau_idx, rep),
+                )
+                write_payload(payload, out_file)
                 print(f"generated {out_file}")
 
 

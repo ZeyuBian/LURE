@@ -2,7 +2,7 @@
 ## CartPole Simulation for LURE
 ################################################################################
 
-gamma <- 0.6
+gamma <- 0.9
 N <- 50
 TT <- 50
 mc_eval_N <- 10000
@@ -245,7 +245,7 @@ plot_cartpole_results <- function(results, V_true) {
     )
 }
 
-dgp <- generate_gym_dgp("CartPole-v1", bridge_index = 3L)
+dgp <- generate_gym_dgp("CartPole-v1")
 
 sim_out <- run_cartpole_simulation(
   dgp = dgp,

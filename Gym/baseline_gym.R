@@ -54,7 +54,7 @@ gym_poly_policy_features <- function(state_mat, pi_func) {
   out
 }
 
-naive_fqe_gym <- function(dat, dgp, gamma, n_iter = 50, ridge = .05) {
+naive_fqe_gym <- function(dat, dgp, gamma, n_iter = 50, ridge = .01) {
   S_mat <- gym_flatten_states(dat$S)
   Sp_mat <- gym_flatten_states(dat$Sp)
   At_vec <- as.vector(dat$Atilde)
@@ -97,7 +97,7 @@ naive_fqe_gym <- function(dat, dgp, gamma, n_iter = 50, ridge = .05) {
        fit_Q0 = fit_Q0, fit_Q1 = fit_Q1)
 }
 
-naive_mis_gym <- function(dat, dgp, gamma, ridge = 0.01) {
+naive_mis_gym <- function(dat, dgp, gamma, ridge = 0.005) {
   S_mat <- gym_flatten_states(dat$S)
   Sp_mat <- gym_flatten_states(dat$Sp)
   At_vec <- as.vector(dat$Atilde)
@@ -172,7 +172,7 @@ naive_sis_gym <- function(dat, dgp, gamma) {
   total / n_traj
 }
 
-naive_lstd_gym <- function(dat, dgp, gamma, ridge = 0.002) {
+naive_lstd_gym <- function(dat, dgp, gamma, ridge = 0.001) {
   S_mat <- gym_flatten_states(dat$S)
   Sp_mat <- gym_flatten_states(dat$Sp)
   At_vec <- as.vector(dat$Atilde)

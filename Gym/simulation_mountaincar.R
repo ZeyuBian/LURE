@@ -215,7 +215,7 @@ plot_mountaincar_results <- function(results, V_true) {
     )
 }
 
-dgp <- generate_gym_dgp("MountainCar-v0", bridge_index = 2L)
+dgp <- generate_gym_dgp("MountainCar-v0")
 
 sim_out <- run_mountaincar_simulation(
   dgp = dgp,

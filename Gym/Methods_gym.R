@@ -12,8 +12,23 @@ gym_clip <- function(x, lo = 1e-2, hi = 1 - 1e-2) {
   pmax(pmin(x, hi), lo)
 }
 
-gym_safe_ratio <- function(num, denom, lambda = 0.005) {
+gym_safe_ratio <- function(num, denom, lambda = 0.01) {
   num * denom / (denom^2 + lambda)
+}
+
+gym_safe_abs_cor <- function(x, y) {
+  ok <- is.finite(x) & is.finite(y)
+  x <- x[ok]
+  y <- y[ok]
+  if (length(x) < 2L) {
+    return(0)
+  }
+  sx <- stats::sd(x)
+  sy <- stats::sd(y)
+  if (!is.finite(sx) || !is.finite(sy) || sx < 1e-8 || sy < 1e-8) {
+    return(0)
+  }
+  abs(stats::cor(x, y))
 }
 
 gym_clip_abs_quantile <- function(x, q = 0.96, abs_cap = NULL) {
@@ -27,8 +42,31 @@ gym_clip_abs_quantile <- function(x, q = 0.96, abs_cap = NULL) {
   pmin(pmax(x, -cap), cap)
 }
 
+gym_reward_quantile_bounds <- function(reward_vec, probs = c(0.10, 0.90)) {
+  bounds <- as.numeric(stats::quantile(
+    reward_vec,
+    probs = probs,
+    na.rm = TRUE,
+    names = FALSE
+  ))
+  if (length(bounds) != 2L || any(!is.finite(bounds)) || bounds[1] > bounds[2]) {
+    bounds <- c(-Inf, Inf)
+  }
+  stats::setNames(bounds, c("lo", "hi"))
+}
+
 gym_state_names <- function(d) {
   paste0("x", seq_len(d))
+}
+
+gym_resolve_state_names <- function(state_names, d) {
+  if (!is.null(state_names)) {
+    state_names <- as.character(unlist(state_names, use.names = FALSE))
+    if (length(state_names) == d) {
+      return(state_names)
+    }
+  }
+  gym_state_names(d)
 }
 
 gym_state_df <- function(state_mat) {
@@ -449,12 +487,12 @@ generate_gym_dgp <- function(env_name, bridge_index = NULL,
     stop("Unsupported environment: ", env_name)
   )
 
-  if (is.null(bridge_index)) {
-    bridge_index <- switch(
-      env_name,
-      "MountainCar-v0" = 2L,
-      "CartPole-v1" = 3L
-    )
+  if (!is.null(bridge_index)) {
+    bridge_index <- as.integer(bridge_index)[1]
+    if (!is.finite(bridge_index) || bridge_index < 1L || bridge_index > state_dim) {
+      stop("bridge_index must be between 1 and ", state_dim,
+           " for ", env_name, ".")
+    }
   }
 
   if (is.null(pi_func)) {
@@ -521,6 +559,45 @@ estimate_true_value_gym <- function(dgp, N, TT, gamma, seed = 1L,
   )
 }
 
+select_bridge_index_gym <- function(dat) {
+  S_mat <- gym_flatten_states(dat$S)
+  At_vec <- as.vector(dat$Atilde)
+  Sp_mat <- gym_flatten_states(dat$Sp)
+  state_names <- gym_resolve_state_names(dat$state_names, ncol(Sp_mat))
+
+  feature_df <- gym_model_feature_df(S_mat)
+  n_feat <- ncol(feature_df)
+
+  fit_at <- glm(
+    gym_model_formula("at", n_feat),
+    family = quasibinomial(),
+    data = cbind(data.frame(at = At_vec), feature_df)
+  )
+  at_hat <- gym_clip(
+    predict(fit_at, newdata = feature_df, type = "response"),
+    0.02,
+    0.98
+  )
+  at_resid <- At_vec - at_hat
+
+  bridge_scores <- numeric(ncol(Sp_mat))
+  names(bridge_scores) <- state_names
+
+  for (j in seq_len(ncol(Sp_mat))) {
+    fit_sp <- lm(
+      gym_model_formula("sp", n_feat),
+      data = cbind(data.frame(sp = Sp_mat[, j]), feature_df)
+    )
+    sp_hat <- predict(fit_sp, newdata = feature_df)
+    bridge_scores[j] <- gym_safe_abs_cor(at_resid, Sp_mat[, j] - sp_hat)
+  }
+
+  list(
+    bridge_index = as.integer(which.max(bridge_scores)),
+    bridge_scores = bridge_scores
+  )
+}
+
 gym_poly_action_features <- function(state_mat, action_vec) {
   state_mat <- as.matrix(state_mat)
   action_vec <- as.integer(action_vec)
@@ -554,6 +631,7 @@ gym_poly_policy_features <- function(state_mat, pi_func) {
   n <- nrow(S_mat)
   d <- ncol(S_mat)
   eta <- init_eta
+  reward_clip_bounds <- gym_reward_quantile_bounds(R_vec)
 
   fit_b <- fit_mu0 <- fit_mu1 <- NULL
   fit_R0 <- fit_R1 <- NULL
@@ -595,6 +673,8 @@ gym_poly_policy_features <- function(state_mat, pi_func) {
                  data = cbind(data.frame(r = R_vec, w1 = w1), df_s))
     tR0 <- fitted(fit_R0)
     tR1 <- fitted(fit_R1)
+    tR0 <- pmin(pmax(tR0, reward_clip_bounds["lo"]), reward_clip_bounds["hi"])
+    tR1 <- pmin(pmax(tR1, reward_clip_bounds["lo"]), reward_clip_bounds["hi"])
     sigma_R[1] <- sqrt(max(sum(eta[, 1] * (R_vec - tR0)^2) / sum(eta[, 1]), 0.01))
     sigma_R[2] <- sqrt(max(sum(eta[, 2] * (R_vec - tR1)^2) / sum(eta[, 2]), 0.01))
 
@@ -666,6 +746,7 @@ em_gym <- function(dat, gamma, max_iter = 90, tol = 1e-3,
   R_vec <- as.vector(dat$R)
   Sp_mat <- gym_flatten_states(dat$Sp)
   n <- nrow(S_mat)
+  reward_clip_bounds <- gym_reward_quantile_bounds(R_vec)
 
   best <- NULL
   for (rst in seq_len(n_restarts)) {
@@ -718,7 +799,8 @@ em_gym <- function(dat, gamma, max_iter = 90, tol = 1e-3,
 
   predict_theta_R <- function(state_new, a) {
     fit <- if (a == 0) fit_R0 else fit_R1
-    predict(fit, newdata = gym_model_feature_df(state_new))
+    reward_hat <- predict(fit, newdata = gym_model_feature_df(state_new))
+    pmin(pmax(reward_hat, reward_clip_bounds["lo"]), reward_clip_bounds["hi"])
   }
 
   predict_theta_Sp <- function(state_new, a) {
@@ -745,6 +827,7 @@ em_gym <- function(dat, gamma, max_iter = 90, tol = 1e-3,
   list(
     eta = eta,
     n_iter = best$n_iter,
+    reward_clip_bounds = reward_clip_bounds,
     sigma_R = sigma_R,
     sigma_Sp = sigma_Sp,
     predict_theta_R = predict_theta_R,
@@ -761,7 +844,7 @@ em_gym <- function(dat, gamma, max_iter = 90, tol = 1e-3,
   )
 }
 
-solve_omega_gym <- function(em_out, dat, dgp, gamma, ridge = 1e-6) {
+solve_omega_gym <- function(em_out, dat, dgp, gamma, ridge = 0.001) {
   S_mat <- gym_flatten_states(dat$S)
   Sp_mat <- gym_flatten_states(dat$Sp)
   eta <- em_out$eta
@@ -812,6 +895,31 @@ weighted_fqe_gym <- function(em_out, dat, dgp, gamma, n_iter = 30, ridge = .001,
   Sp_mat <- gym_flatten_states(dat$Sp)
   R_vec <- as.vector(dat$R)
   eta <- em_out$eta
+  value_clip_bounds <- c(lo = -Inf, hi = Inf)
+  value_clip_mode <- "none"
+
+  if (is.finite(gamma) && gamma < 1) {
+    reward_bounds <- gym_reward_quantile_bounds(R_vec)
+    value_clip_bounds <- reward_bounds / (1 - gamma)
+    value_clip_mode <- "quantile"
+    if (any(!is.finite(value_clip_bounds)) || value_clip_bounds["lo"] > value_clip_bounds["hi"]) {
+      value_clip_bounds[] <- c(-Inf, Inf)
+      value_clip_mode <- "none"
+    } else if (abs(value_clip_bounds["hi"] - value_clip_bounds["lo"]) < 1e-8) {
+      value_abs_cap <- max(abs(R_vec), na.rm = TRUE) / (1 - gamma)
+      if (is.finite(value_abs_cap) && value_abs_cap > 0) {
+        value_clip_bounds[] <- c(-value_abs_cap, value_abs_cap)
+        value_clip_mode <- "abs_fallback"
+      } else {
+        value_clip_bounds[] <- c(-Inf, Inf)
+        value_clip_mode <- "none"
+      }
+    }
+  }
+
+  clip_value <- function(x) {
+    pmin(pmax(x, value_clip_bounds["lo"]), value_clip_bounds["hi"])
+  }
 
   pi_sp <- dgp$pi_func(Sp_mat)
   Q0_sp <- rep(0, nrow(S_mat))
@@ -821,8 +929,8 @@ weighted_fqe_gym <- function(em_out, dat, dgp, gamma, n_iter = 30, ridge = .001,
   for (iter in seq_len(n_iter)) {
     V_sp <- (1 - pi_sp) * Q0_sp + pi_sp * Q1_sp
     Y_target <- R_vec + gamma * V_sp
-    w0 <- pmax(eta[, 1], 1e-5)
-    w1 <- pmax(eta[, 2], 1e-5)
+    w0 <- pmax(eta[, 1], 1e-3)
+    w1 <- pmax(eta[, 2], 1e-3)
 
     fit_Q0 <- gym_weighted_spline_ridge_fit(
       S_mat, Y_target,
@@ -839,25 +947,28 @@ weighted_fqe_gym <- function(em_out, dat, dgp, gamma, n_iter = 30, ridge = .001,
       spline_degree = spline_degree
     )
 
-    Q0_sp <- fit_Q0$predict(Sp_mat)
-    Q1_sp <- fit_Q1$predict(Sp_mat)
+    Q0_sp <- clip_value(fit_Q0$predict(Sp_mat))
+    Q1_sp <- clip_value(fit_Q1$predict(Sp_mat))
   }
 
   predict_Q <- function(state_new, a) {
     fit <- if (a == 0) fit_Q0 else fit_Q1
-    fit$predict(state_new)
+    clip_value(fit$predict(state_new))
   }
 
   predict_V <- function(state_new) {
     pi_s <- dgp$pi_func(state_new)
-    (1 - pi_s) * predict_Q(state_new, 0) + pi_s * predict_Q(state_new, 1)
+    v_hat <- (1 - pi_s) * predict_Q(state_new, 0) + pi_s * predict_Q(state_new, 1)
+    clip_value(v_hat)
   }
 
   list(
     predict_Q = predict_Q,
     predict_V = predict_V,
     fit_Q0 = fit_Q0,
-    fit_Q1 = fit_Q1
+    fit_Q1 = fit_Q1,
+    value_clip_bounds = value_clip_bounds,
+    value_clip_mode = value_clip_mode
   )
 }
 
@@ -898,10 +1009,22 @@ compute_eta_outfold_gym <- function(em, S_te, At_te, R_te, Sp_te) {
 mr_components_gym <- function(dat, dgp, gamma) {
   n_traj <- dim(dat$S)[1]
   TT <- dim(dat$S)[2]
+  state_dim <- dim(dat$S)[3]
   bridge_clip_q <- 0.95
   bridge_abs_cap <- 5
   omega_clip_q <- 0.95
   omega_abs_cap <- 6
+  bridge_out <- select_bridge_index_gym(dat)
+  bridge_scores <- bridge_out$bridge_scores
+  bridge_index <- bridge_out$bridge_index
+
+  if (!is.null(dgp$bridge_index)) {
+    bridge_index <- as.integer(dgp$bridge_index)[1]
+  }
+  if (!is.finite(bridge_index) || bridge_index < 1L || bridge_index > state_dim) {
+    stop("bridge_index must be between 1 and ", state_dim, ".")
+  }
+
   fold_ids <- sample(rep(1:2, length.out = n_traj))
 
   phi_list <- vector("list", 2)
@@ -928,8 +1051,8 @@ mr_components_gym <- function(dat, dgp, gamma) {
     tR1 <- em$predict_theta_R(S_te, 1)
     tAt0 <- em$predict_mu(S_te, 0)
     tAt1 <- em$predict_mu(S_te, 1)
-    tSp0 <- em$predict_theta_Sp(S_te, 0)[, dgp$bridge_index]
-    tSp1 <- em$predict_theta_Sp(S_te, 1)[, dgp$bridge_index]
+    tSp0 <- em$predict_theta_Sp(S_te, 0)[, bridge_index]
+    tSp1 <- em$predict_theta_Sp(S_te, 1)[, bridge_index]
 
     om0 <- omega_out$predict_omega(S_te, rep(0L, n_test))
     om1 <- omega_out$predict_omega(S_te, rep(1L, n_test))
@@ -950,7 +1073,7 @@ mr_components_gym <- function(dat, dgp, gamma) {
     direct_states <- gym_draw_initial_states(dgp, 5000)
     direct_list[k] <- mean(fqe$predict_V(direct_states))
 
-    Sp_bridge <- Sp_te[, dgp$bridge_index]
+    Sp_bridge <- Sp_te[, bridge_index]
     d_At_0 <- tAt0 - tAt1
     d_At_1 <- tAt1 - tAt0
     d_R_0 <- tR0 - tR1
@@ -986,29 +1109,42 @@ mr_components_gym <- function(dat, dgp, gamma) {
     n_traj = n_traj,
     TT = TT,
     direct_list = direct_list,
-    phi_list = phi_list
+    phi_list = phi_list,
+    bridge_index = bridge_index,
+    bridge_scores = bridge_scores
+  )
+}
+
+summarize_mr_components_gym <- function(comps) {
+  direct <- mean(comps$direct_list)
+  phi_all <- unlist(comps$phi_list)
+  V_hat <- direct + mean(phi_all)
+  se <- sqrt(stats::var(phi_all) / (comps$n_traj * comps$TT))
+
+  list(
+    direct = direct,
+    V_hat = V_hat,
+    se = se,
+    ci_lo = V_hat - 1.96 * se,
+    ci_hi = V_hat + 1.96 * se,
+    bridge_index = comps$bridge_index,
+    bridge_scores = comps$bridge_scores
   )
 }
 
 direct_only_estimator_gym <- function(dat, dgp, gamma) {
   comps <- mr_components_gym(dat, dgp, gamma)
-  list(V_hat = mean(comps$direct_list))
+  summary <- summarize_mr_components_gym(comps)
+  list(
+    V_hat = summary$direct,
+    bridge_index = summary$bridge_index,
+    bridge_scores = summary$bridge_scores
+  )
 }
 
 mr_estimator_gym <- function(dat, dgp, gamma) {
   comps <- mr_components_gym(dat, dgp, gamma)
-
-  direct <- mean(comps$direct_list)
-  phi_all <- unlist(comps$phi_list)
-  V_hat <- direct + mean(phi_all)
-  se <- sqrt(var(phi_all) / (comps$n_traj * comps$TT))
-
-  list(
-    V_hat = V_hat,
-    se = se,
-    ci_lo = V_hat - 1.96 * se,
-    ci_hi = V_hat + 1.96 * se
-  )
+  summarize_mr_components_gym(comps)
 }
 
 evaluate_gym_estimators <- function(dat, dgp, gamma, seed = NULL) {
@@ -1018,16 +1154,26 @@ evaluate_gym_estimators <- function(dat, dgp, gamma, seed = NULL) {
 
   dgp_rep <- dgp
   dgp_rep$init_states <- dat$init_states
+  state_names <- gym_resolve_state_names(dat$state_names, dim(dat$S)[3])
+  bridge_score_names <- paste0("bridge_score_", make.names(state_names))
 
-  V_direct <- tryCatch(
-    direct_only_estimator_gym(dat, dgp_rep, gamma)$V_hat,
-    error = function(e) NA_real_
-  )
-
-  mr_out <- tryCatch(
-    mr_estimator_gym(dat, dgp_rep, gamma),
-    error = function(e) list(V_hat = NA_real_, ci_lo = NA_real_, ci_hi = NA_real_)
-  )
+  mr_out <- tryCatch({
+    comps <- mr_components_gym(dat, dgp_rep, gamma)
+    summarize_mr_components_gym(comps)
+  }, error = function(e) list(
+    direct = NA_real_,
+    V_hat = NA_real_,
+    ci_lo = NA_real_,
+    ci_hi = NA_real_,
+    bridge_index = NA_real_,
+    bridge_scores = stats::setNames(rep(NA_real_, length(state_names)), state_names)
+  ))
+  V_direct <- mr_out$direct
+  bridge_scores <- mr_out$bridge_scores
+  if (is.null(bridge_scores) || length(bridge_scores) != length(state_names)) {
+    bridge_scores <- stats::setNames(rep(NA_real_, length(state_names)), state_names)
+  }
+  bridge_score_vec <- stats::setNames(as.numeric(bridge_scores), bridge_score_names)
 
   V_fqe <- tryCatch(
     naive_fqe_gym(dat, dgp_rep, gamma)$V_hat,
@@ -1054,7 +1200,9 @@ evaluate_gym_estimators <- function(dat, dgp, gamma, seed = NULL) {
     LSTD = V_lstd,
     MR = mr_out$V_hat,
     MR_ci_lo = mr_out$ci_lo,
-    MR_ci_hi = mr_out$ci_hi
+    MR_ci_hi = mr_out$ci_hi,
+    bridge_index = unname(mr_out$bridge_index),
+    bridge_score_vec
   )
 }
 

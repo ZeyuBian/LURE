@@ -13,10 +13,10 @@ source("baseline.R")
 library(dplyr)
 library(ggplot2)
 
-gamma <- 0.8
+gamma <- 0.7
 N <- 50
 TT <- 50
-n_rep <- 20
+n_rep <- 100
 epsilon_grid <- c(0.05, 0.1, 0.2,0.3)
 
 # ==============================================================================
@@ -53,6 +53,11 @@ run_full_simulation <- function(dgp, N, TT, epsilon_grid, gamma, n_rep) {
   ci_results <- data.frame(rep = integer(0), epsilon = numeric(0),
                            covers = logical(0),
                            stringsAsFactors = FALSE)
+  bridge_results <- data.frame(rep = integer(0), epsilon = numeric(0),
+                               bridge_index = integer(0),
+                               bridge_score_sp1 = numeric(0),
+                               bridge_score_sp2 = numeric(0),
+                               stringsAsFactors = FALSE)
 
   for (eps in epsilon_grid) {
     cat("Running epsilon =", eps, "with", n_rep, "replications\n")
@@ -82,6 +87,18 @@ run_full_simulation <- function(dgp, N, TT, epsilon_grid, gamma, n_rep) {
                    covers = est["MR_ci_lo"] <= V_true & V_true <= est["MR_ci_hi"],
                    stringsAsFactors = FALSE)
       )
+
+      bridge_results <- rbind(
+        bridge_results,
+        data.frame(
+          rep = rep,
+          epsilon = eps,
+          bridge_index = as.integer(est["bridge_index"]),
+          bridge_score_sp1 = as.numeric(est["bridge_score_sp1"]),
+          bridge_score_sp2 = as.numeric(est["bridge_score_sp2"]),
+          stringsAsFactors = FALSE
+        )
+      )
     }
   }
 
@@ -94,12 +111,26 @@ run_full_simulation <- function(dgp, N, TT, epsilon_grid, gamma, n_rep) {
     group_by(epsilon) %>%
     summarize(coverage = mean(covers, na.rm = TRUE),
               .groups = "drop")
+  bridge_summary <- bridge_results %>%
+    mutate(bridge_state = ifelse(bridge_index == 1L, "Sp1",
+                          ifelse(bridge_index == 2L, "Sp2", NA_character_))) %>%
+    group_by(epsilon, bridge_state) %>%
+    summarize(
+      n_selected = n(),
+      mean_score_sp1 = mean(bridge_score_sp1, na.rm = TRUE),
+      mean_score_sp2 = mean(bridge_score_sp2, na.rm = TRUE),
+      .groups = "drop"
+    )
   cat("\n--- LURE 95% CI Coverage ---\n")
   print(as.data.frame(coverage))
+  cat("\n--- Selected Bridge Coordinate ---\n")
+  print(as.data.frame(bridge_summary))
 
   list(results  = results,
        summary  = summary,
        coverage = coverage,
+       bridge_results = bridge_results,
+       bridge_summary = bridge_summary,
        ci_results = ci_results,
        V_true   = V_true,
        N = N, TT = TT,

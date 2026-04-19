@@ -3,7 +3,6 @@
 ##
 ## 2D state S = (S1, S2), binary action A in {0,1}, hidden actions.
 ## Linear transition + deterministic reward from next state => Q^pi linear
-## when target policy is constant.
 ## Function approximation via linear regression in (s1, s2).
 ## Competing (naive) methods: FQE, SIS, MIS, DRL, LSTD — all treat surrogate as true.
 ## Our method: LURE (multiply robust) with EM-style nuisance estimation.
@@ -12,7 +11,7 @@
 expit  <- function(x) 1 / (1 + exp(-x))
 clip   <- function(x, lo = 1e-2, hi = 1 - 1e-2) pmax(pmin(x, hi), lo)
 
-safe_ratio <- function(num, denom, lambda = 0.005) {
+safe_ratio <- function(num, denom, lambda = 0.001) {
   num * denom / (denom^2 + lambda)
 }
 
@@ -20,6 +19,155 @@ clip_abs_quantile <- function(x, q = 0.97) {
   cap <- as.numeric(quantile(abs(x), q, na.rm = TRUE, names = FALSE))
   if (!is.finite(cap) || cap <= 0) return(x)
   pmin(pmax(x, -cap), cap)
+}
+
+safe_abs_cor <- function(x, y) {
+  ok <- is.finite(x) & is.finite(y)
+  x <- x[ok]
+  y <- y[ok]
+  if (length(x) < 2L) return(0)
+  sx <- stats::sd(x)
+  sy <- stats::sd(y)
+  if (!is.finite(sx) || !is.finite(sy) || sx < 1e-8 || sy < 1e-8) {
+    return(0)
+  }
+  abs(stats::cor(x, y))
+}
+
+continuous_model_feature_names <- function(k) {
+  paste0("f", seq_len(k))
+}
+
+continuous_model_formula <- function(response, k) {
+  reformulate(continuous_model_feature_names(k), response = response)
+}
+
+continuous_spline_feature_df <- function(s1, s2, specs = NULL,
+                                         df = 6L, degree = 3L) {
+  if (!requireNamespace("splines", quietly = TRUE)) {
+    stop("Package 'splines' is required for spline-based bridge selection.")
+  }
+
+  state_mat <- cbind(s1 = as.numeric(s1), s2 = as.numeric(s2))
+  n <- nrow(state_mat)
+  d <- ncol(state_mat)
+
+  if (is.null(specs)) {
+    specs <- vector("list", d)
+  }
+
+  feat_list <- vector("list", d)
+
+  for (j in seq_len(d)) {
+    x <- as.numeric(state_mat[, j])
+
+    if (is.null(specs[[j]])) {
+      boundary_knots <- range(x, na.rm = TRUE)
+      if (!all(is.finite(boundary_knots)) || diff(boundary_knots) < 1e-8) {
+        basis_j <- matrix(0, nrow = n, ncol = 1L)
+        specs[[j]] <- list(type = "constant_zero")
+      } else {
+        basis_j <- splines::bs(
+          x,
+          df = df,
+          degree = degree,
+          intercept = FALSE,
+          Boundary.knots = boundary_knots,
+          warn.outside = FALSE
+        )
+        specs[[j]] <- list(
+          type = "bs",
+          knots = attr(basis_j, "knots"),
+          Boundary.knots = attr(basis_j, "Boundary.knots"),
+          degree = attr(basis_j, "degree"),
+          intercept = FALSE
+        )
+      }
+    } else if (identical(specs[[j]]$type, "constant_zero")) {
+      basis_j <- matrix(0, nrow = n, ncol = 1L)
+    } else {
+      basis_j <- splines::bs(
+        x,
+        knots = specs[[j]]$knots,
+        degree = specs[[j]]$degree,
+        intercept = specs[[j]]$intercept,
+        Boundary.knots = specs[[j]]$Boundary.knots,
+        warn.outside = FALSE
+      )
+    }
+
+    feat_list[[j]] <- basis_j
+  }
+
+  feat_mat <- do.call(cbind, feat_list)
+  out <- as.data.frame(feat_mat)
+  names(out) <- continuous_model_feature_names(ncol(out))
+  list(feature_df = out, specs = specs)
+}
+
+continuous_select_sp <- function(sp1, sp2, bridge_index) {
+  if (bridge_index == 1L) return(sp1)
+  if (bridge_index == 2L) return(sp2)
+  stop("bridge_index must be either 1L or 2L.")
+}
+
+continuous_predict_theta_Sp <- function(em_out, s1_new, s2_new, a, bridge_index) {
+  if (bridge_index == 1L) {
+    return(em_out$predict_theta_Sp1(s1_new, s2_new, a))
+  }
+  if (bridge_index == 2L) {
+    return(em_out$predict_theta_Sp2(s1_new, s2_new, a))
+  }
+  stop("bridge_index must be either 1L or 2L.")
+}
+
+select_bridge_index_continuous <- function(dat, spline_df = 6L,
+                                           spline_degree = 3L) {
+  S1_vec <- as.vector(dat$S1)
+  S2_vec <- as.vector(dat$S2)
+  At_vec <- as.vector(dat$Atilde)
+  Sp_mat <- cbind(
+    Sp1 = as.vector(dat$Sp1),
+    Sp2 = as.vector(dat$Sp2)
+  )
+
+  feat_out <- continuous_spline_feature_df(
+    S1_vec,
+    S2_vec,
+    df = spline_df,
+    degree = spline_degree
+  )
+  feature_df <- feat_out$feature_df
+
+  fit_at <- glm(
+    continuous_model_formula("at", ncol(feature_df)),
+    family = quasibinomial(),
+    data = cbind(data.frame(at = At_vec), feature_df)
+  )
+  at_hat <- clip(
+    predict(fit_at, newdata = feature_df, type = "response"),
+    0.02,
+    0.98
+  )
+  at_resid <- At_vec - at_hat
+
+  bridge_scores <- numeric(ncol(Sp_mat))
+  names(bridge_scores) <- colnames(Sp_mat)
+
+  for (j in seq_len(ncol(Sp_mat))) {
+    fit_sp <- lm(
+      continuous_model_formula("sp", ncol(feature_df)),
+      data = cbind(data.frame(sp = Sp_mat[, j]), feature_df)
+    )
+    sp_hat <- predict(fit_sp, newdata = feature_df)
+    bridge_scores[j] <- safe_abs_cor(at_resid, Sp_mat[, j] - sp_hat)
+  }
+
+  list(
+    bridge_index = as.integer(which.max(bridge_scores)),
+    bridge_scores = bridge_scores,
+    spline_specs = feat_out$specs
+  )
 }
 
 draw_initial_states <- function(dgp, n) {
@@ -41,6 +189,7 @@ generate_dgp_continuous <- function(
     s2_a_int = -0.5,         ## S2 transition action-state interaction
     init_mean = c(0.5, -0.5), ## Initial-state mean
     init_sd   = c(1, 1), ## Initial-state sd
+  bridge_index = NULL,
     ## Target policy: pi_2(1|s) = I(s1<=0, s2<=0)
     pi_func  = function(s1, s2) as.numeric(s1 >= 0.25 & s2 >= -0.10)
 ) {
@@ -52,6 +201,7 @@ generate_dgp_continuous <- function(
        s2_a_int = s2_a_int,
        init_mean = init_mean,
        init_sd = init_sd,
+      bridge_index = bridge_index,
        pi_func  = pi_func)
 }
 
@@ -59,7 +209,7 @@ generate_dgp_continuous <- function(
 # 2. True value (Monte Carlo rollout)
 # ==============================================================================
 compute_true_value_continuous <- function(dgp, gamma,
-                                          n_mc = 4000, TT_mc = 2000) {
+                                          n_mc = 10000, TT_mc = 200) {
   pi_func  <- dgp$pi_func
   sigma_tr <- dgp$sigma_tr
   tr_shift <- dgp$tr_shift
@@ -79,7 +229,7 @@ compute_true_value_continuous <- function(dgp, gamma,
       s2_new <- (1/3) * s2 - tr_shift * (2*a - 1) + s2_a_int * s2 * a +
         rnorm(1, 0, sigma_tr)
       ## Reward depends on (S, A) only, NOT on S' => R ⊥ S' | (S, A)
-      r <- 2+s1 + (1/2)*s2 + (3/2)*a  + rnorm(1, 0, .5)
+      r <- 2+s1 + (1/2)*s2 + (3/2)*a  + rnorm(1, 0, dgp$sigma_R)
       val  <- val + disc * r
       disc <- disc * gamma
       s1 <- s1_new;  s2 <- s2_new
@@ -470,6 +620,16 @@ mr_estimator_continuous <- function(dat, dgp, gamma) {
   N  <- nrow(dat$S1)
   TT <- ncol(dat$S1)
   bridge_clip_q <- 0.97
+  bridge_out <- select_bridge_index_continuous(dat)
+  bridge_scores <- bridge_out$bridge_scores
+  bridge_index <- bridge_out$bridge_index
+
+  if (!is.null(dgp$bridge_index)) {
+    bridge_index <- as.integer(dgp$bridge_index)[1]
+  }
+  if (!(bridge_index %in% c(1L, 2L))) {
+    stop("bridge_index must be either 1L or 2L.")
+  }
 
   ## K=2 cross-fitting: split trajectories into 2 folds
   fold_ids <- sample(rep(1:2, length.out = N))
@@ -527,8 +687,9 @@ mr_estimator_continuous <- function(dat, dgp, gamma) {
     direct_list[k] <- mean(fqe$predict_V(S1_mc, S2_mc))
 
     ## Bridge functions
-    tSp2_0 <- em$predict_theta_Sp2(S1_te, S2_te, 0)
-    tSp2_1 <- em$predict_theta_Sp2(S1_te, S2_te, 1)
+    Sp_bridge_te <- continuous_select_sp(Sp1_te, Sp2_te, bridge_index)
+    tSp_bridge_0 <- continuous_predict_theta_Sp(em, S1_te, S2_te, 0, bridge_index)
+    tSp_bridge_1 <- continuous_predict_theta_Sp(em, S1_te, S2_te, 1, bridge_index)
 
     d_At_0  <- tAt0 - tAt1
     br_At_0 <- clip_abs_quantile(safe_ratio(At_te - tAt1, d_At_0), bridge_clip_q)
@@ -540,15 +701,21 @@ mr_estimator_continuous <- function(dat, dgp, gamma) {
     d_R_1  <- tR1 - tR0
     br_R_1 <- clip_abs_quantile(safe_ratio(R_te - tR0, d_R_1), bridge_clip_q)
 
-    d_Sp2_0  <- tSp2_0 - tSp2_1
-    br_Sp2_0 <- clip_abs_quantile(safe_ratio(Sp2_te - tSp2_1, d_Sp2_0), bridge_clip_q)
-    d_Sp2_1  <- tSp2_1 - tSp2_0
-    br_Sp2_1 <- clip_abs_quantile(safe_ratio(Sp2_te - tSp2_0, d_Sp2_1), bridge_clip_q)
+    d_Sp_0  <- tSp_bridge_0 - tSp_bridge_1
+    br_Sp_0 <- clip_abs_quantile(
+      safe_ratio(Sp_bridge_te - tSp_bridge_1, d_Sp_0),
+      bridge_clip_q
+    )
+    d_Sp_1  <- tSp_bridge_1 - tSp_bridge_0
+    br_Sp_1 <- clip_abs_quantile(
+      safe_ratio(Sp_bridge_te - tSp_bridge_0, d_Sp_1),
+      bridge_clip_q
+    )
 
     g0  <- clip_abs_quantile(br_At_0 * br_R_0, bridge_clip_q)
     g1  <- clip_abs_quantile(br_At_1 * br_R_1, bridge_clip_q)
-    gp0 <- clip_abs_quantile(br_At_0 * br_Sp2_0, bridge_clip_q)
-    gp1 <- clip_abs_quantile(br_At_1 * br_Sp2_1, bridge_clip_q)
+    gp0 <- clip_abs_quantile(br_At_0 * br_Sp_0, bridge_clip_q)
+    gp1 <- clip_abs_quantile(br_At_1 * br_Sp_1, bridge_clip_q)
 
     ## IF components
     T1 <- gp0 * om0_clip * (R_te - tR0) + gp1 * om1_clip * (R_te - tR1)
@@ -564,8 +731,14 @@ mr_estimator_continuous <- function(dat, dgp, gamma) {
   V_hat <- direct + mean(phi_all)
   se    <- sqrt(var(phi_all) / (N * TT))
 
-  list(V_hat = V_hat, se = se,
-      ci_lo = V_hat - 1.96 * se, ci_hi = V_hat + 1.96 * se)
+  list(
+    V_hat = V_hat,
+    se = se,
+    ci_lo = V_hat - 1.96 * se,
+    ci_hi = V_hat + 1.96 * se,
+    bridge_index = bridge_index,
+    bridge_scores = bridge_scores
+  )
 }
 
 
@@ -577,11 +750,21 @@ one_rep_continuous <- function(dgp, N, TT, epsilon, gamma) {
 
   mr_out <- tryCatch(
     mr_estimator_continuous(dat, dgp, gamma),
-    error = function(e) list(V_hat = NA_real_, ci_lo = NA_real_, ci_hi = NA_real_)
+    error = function(e) list(
+      V_hat = NA_real_,
+      ci_lo = NA_real_,
+      ci_hi = NA_real_,
+      bridge_index = NA_real_,
+      bridge_scores = c(Sp1 = NA_real_, Sp2 = NA_real_)
+    )
   )
   V_mr     <- mr_out$V_hat
   mr_cilo  <- mr_out$ci_lo
   mr_cihi  <- mr_out$ci_hi
+  bridge_scores <- mr_out$bridge_scores
+  if (is.null(bridge_scores) || length(bridge_scores) != 2L) {
+    bridge_scores <- c(Sp1 = NA_real_, Sp2 = NA_real_)
+  }
 
   V_fqe <- tryCatch(
     naive_fqe_continuous(dat, dgp, gamma)$V_hat,
@@ -608,7 +791,17 @@ one_rep_continuous <- function(dgp, N, TT, epsilon, gamma) {
     error = function(e) NA_real_
   )
 
-  c(FQE = V_fqe, SIS = V_sis, MIS = V_mis, DRL = V_drl, LSTD = V_lstd,
+  c(
+    FQE = V_fqe,
+    SIS = V_sis,
+    MIS = V_mis,
+    DRL = V_drl,
+    LSTD = V_lstd,
     MR = V_mr,
-    MR_ci_lo = mr_cilo, MR_ci_hi = mr_cihi)
+    MR_ci_lo = mr_cilo,
+    MR_ci_hi = mr_cihi,
+    bridge_index = unname(mr_out$bridge_index),
+    bridge_score_sp1 = unname(bridge_scores["Sp1"]),
+    bridge_score_sp2 = unname(bridge_scores["Sp2"])
+  )
 }
