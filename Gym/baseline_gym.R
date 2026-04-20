@@ -140,36 +140,94 @@ naive_drl_gym <- function(dat, dgp, gamma) {
   list(V_hat = V_hat, V_fqe = fqe$V_hat, V_mis = mis$V_hat)
 }
 
-naive_sis_gym <- function(dat, dgp, gamma) {
+naive_sis_gym <- function(dat, dgp, gamma,
+                          min_prob = 0.05, max_ratio = 5,
+                          max_weight = 10, normalize = TRUE,
+                          behavior_model = c("state", "intercept")) {
   n_traj <- dim(dat$S)[1]
   TT <- dim(dat$S)[2]
+  state_dim <- dim(dat$S)[3]
   S_mat <- gym_flatten_states(dat$S)
   At_vec <- as.vector(dat$Atilde)
-  feature_df <- gym_model_feature_df(S_mat)
-  fit_b <- glm(gym_model_formula("a", ncol(feature_df)), family = binomial(),
-               data = cbind(data.frame(a = At_vec), feature_df))
+  At_mat <- as.matrix(dat$Atilde)
+  R_mat <- as.matrix(dat$R)
+  behavior_model <- match.arg(behavior_model)
 
-  b_func <- function(state_new) {
-    gym_clip(predict(fit_b, newdata = gym_model_feature_df(state_new), type = "response"),
-             0.2, 0.8)
+  feature_df <- gym_model_feature_df(S_mat)
+  fit_b <- if (behavior_model == "intercept") {
+    glm(a ~ 1, family = binomial(), data = data.frame(a = At_vec))
+  } else {
+    glm(gym_model_formula("a", ncol(feature_df)), family = binomial(),
+        data = cbind(data.frame(a = At_vec), feature_df))
   }
 
-  total <- 0
-  for (i in seq_len(n_traj)) {
-    w <- 1
-    for (t in seq_len(TT)) {
-      state_t <- dat$S[i, t, ]
-      at <- dat$Atilde[i, t]
-      p1 <- dgp$pi_func(matrix(state_t, nrow = 1))
-      pi_a <- ifelse(at == 1L, p1, 1 - p1)
-      b_a <- b_func(matrix(state_t, nrow = 1))
-      b_a <- ifelse(at == 1L, b_a, 1 - b_a)
-      w <- w * (pi_a / b_a)
-      total <- total + w * gamma^(t - 1L) * dat$R[i, t]
+  b_prob <- matrix(
+    gym_clip(
+      predict(
+        fit_b,
+        newdata = if (behavior_model == "intercept") {
+          data.frame(a = At_vec)
+        } else {
+          feature_df
+        },
+        type = "response"
+      ),
+      min_prob,
+      1 - min_prob
+    ),
+    nrow = n_traj,
+    ncol = TT
+  )
+
+  cum_w <- matrix(1, nrow = n_traj, ncol = TT)
+  for (t in seq_len(TT)) {
+    state_t <- dat$S[, t, , drop = FALSE]
+    dim(state_t) <- c(n_traj, state_dim)
+
+    p1_t <- dgp$pi_func(state_t)
+    pi_a <- ifelse(At_mat[, t] == 1L, p1_t, 1 - p1_t)
+    b_a <- ifelse(At_mat[, t] == 1L, b_prob[, t], 1 - b_prob[, t])
+
+    step_ratio <- pi_a / b_a
+    step_ratio[!is.finite(step_ratio)] <- max_ratio
+    step_ratio <- pmin(step_ratio, max_ratio)
+
+    if (t == 1L) {
+      cum_w[, t] <- pmin(step_ratio, max_weight)
+    } else {
+      cum_w[, t] <- pmin(cum_w[, t - 1L] * step_ratio, max_weight)
     }
   }
 
-  total / n_traj
+  gamma_t <- gamma^(seq_len(TT) - 1L)
+
+  if (normalize) {
+    est_t <- numeric(TT)
+    for (t in seq_len(TT)) {
+      denom <- sum(cum_w[, t])
+      if (!is.finite(denom) || denom <= 0) {
+        next
+      }
+      est_t[t] <- sum(cum_w[, t] * R_mat[, t]) / denom
+    }
+
+    return(list(
+      V_hat = sum(gamma_t * est_t),
+      fit_b = fit_b,
+      behavior_model = behavior_model,
+      cum_w = cum_w
+    ))
+  }
+
+  weighted_rewards <- cum_w *
+    matrix(gamma_t, nrow = n_traj, ncol = TT, byrow = TRUE) * R_mat
+
+  list(
+    V_hat = sum(weighted_rewards) / n_traj,
+    fit_b = fit_b,
+    behavior_model = behavior_model,
+    cum_w = cum_w
+  )
 }
 
 naive_lstd_gym <- function(dat, dgp, gamma, ridge = 0.001) {

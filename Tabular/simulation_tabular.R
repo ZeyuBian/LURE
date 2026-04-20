@@ -9,7 +9,7 @@
 source("Methods.R")
 library(rpart)
 library(dplyr)
-gamma <- 0.6
+gamma <- 0.7
 N <- 50
 TT <- 50
 n_rep <- 100

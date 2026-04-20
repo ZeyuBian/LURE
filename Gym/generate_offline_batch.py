@@ -29,6 +29,7 @@ def main() -> None:
     parser.add_argument("--N", type=int, default=50)
     parser.add_argument("--T", type=int, default=50)
     parser.add_argument("--n-rep", type=int, default=50)
+    parser.add_argument("--rep-start", type=int, default=1)
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--taus", nargs="+", type=float, default=[0.05, 0.10, 0.20, 0.30])
     parser.add_argument("--seed", type=int, default=10002)
@@ -43,6 +44,11 @@ def main() -> None:
         default=str(Path(__file__).resolve().parent),
     )
     args = parser.parse_args()
+
+    if args.n_rep < 1:
+        raise ValueError("--n-rep must be at least 1.")
+    if args.rep_start < 1:
+        raise ValueError("--rep-start must be at least 1.")
 
     output_root = Path(args.output_dir)
     output_root.mkdir(parents=True, exist_ok=True)
@@ -77,7 +83,8 @@ def main() -> None:
             tau_dir.mkdir(parents=True, exist_ok=True)
             tau_dirs[tau] = tau_dir
 
-        for rep in range(1, args.n_rep + 1):
+        rep_stop = args.rep_start + args.n_rep
+        for rep in range(args.rep_start, rep_stop):
             oracle_payload = rollout_dataset(
                 env_name=env_name,
                 dataset="offline",

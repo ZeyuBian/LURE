@@ -11,7 +11,7 @@
 expit  <- function(x) 1 / (1 + exp(-x))
 clip   <- function(x, lo = 1e-2, hi = 1 - 1e-2) pmax(pmin(x, hi), lo)
 
-safe_ratio <- function(num, denom, lambda = 0.001) {
+safe_ratio <- function(num, denom, lambda = 0.0001) {
   num * denom / (denom^2 + lambda)
 }
 
@@ -182,13 +182,13 @@ draw_initial_states <- function(dgp, n) {
 # ==============================================================================
 generate_dgp_continuous <- function(
     sigma_tr = 0.5,          ## Transition noise sd (variance = 0.25)
-    sigma_R  = 1,          ## Reward noise sd (independent of transition)
+    sigma_R  = .5,          ## Reward noise sd (independent of transition)
     b_prob   = 0.5,          ## Behavior policy: b(1|s) = 0.5 (constant)
     tr_shift = 3 / 5,        ## Common action shift in transitions
     s1_a_int = 0.5,          ## S1 transition action-state interaction
     s2_a_int = -0.5,         ## S2 transition action-state interaction
     init_mean = c(0.5, -0.5), ## Initial-state mean
-    init_sd   = c(1, 1), ## Initial-state sd
+    init_sd   = c(.5, .5), ## Initial-state sd
   bridge_index = NULL,
     ## Target policy: pi_2(1|s) = I(s1<=0, s2<=0)
     pi_func  = function(s1, s2) as.numeric(s1 >= 0.25 & s2 >= -0.10)
@@ -229,7 +229,7 @@ compute_true_value_continuous <- function(dgp, gamma,
       s2_new <- (1/3) * s2 - tr_shift * (2*a - 1) + s2_a_int * s2 * a +
         rnorm(1, 0, sigma_tr)
       ## Reward depends on (S, A) only, NOT on S' => R ⊥ S' | (S, A)
-      r <- 2+s1 + (1/2)*s2 + (3/2)*a  + rnorm(1, 0, dgp$sigma_R)
+      r <- 1+s1 + (1/2)*s2 + (3/2)*a  + rnorm(1, 0, dgp$sigma_R)
       val  <- val + disc * r
       disc <- disc * gamma
       s1 <- s1_new;  s2 <- s2_new
@@ -262,7 +262,7 @@ generate_data_continuous <- function(dgp, N, TT, epsilon) {
         rnorm(1, 0, dgp$sigma_tr)
       Sp1[i, t] <- s1_new;  Sp2[i, t] <- s2_new
       ## Reward depends on (S, A) only, NOT on S' => R ⊥ S' | (S, A)
-      R[i, t] <- 2+s1 + (1/2)*s2 + (3/2)*a  + rnorm(1, 0, dgp$sigma_R)
+      R[i, t] <- 1+s1 + (1/2)*s2 + (3/2)*a  + rnorm(1, 0, dgp$sigma_R)
       s1 <- s1_new;  s2 <- s2_new
     }
   }
@@ -454,7 +454,7 @@ em_continuous <- function(dat, gamma, max_iter = 100, tol = 1e-3,
 # ==============================================================================
 # 5. Density-ratio estimation (linear features, moment equation)
 # ==============================================================================
-solve_omega_continuous <- function(em_out, dat, dgp, gamma, ridge = 0.001) {
+solve_omega_continuous <- function(em_out, dat, dgp, gamma, ridge = 0.0001) {
   S1_vec  <- as.vector(dat$S1)
   S2_vec  <- as.vector(dat$S2)
   Sp1_vec <- as.vector(dat$Sp1)

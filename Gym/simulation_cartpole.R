@@ -7,8 +7,8 @@ N <- 50
 TT <- 50
 mc_eval_N <- 10000
 mc_eval_T <- 500
-n_rep <- 20
-tau_grid <- c(0.20,.3)
+n_rep <- 100
+tau_grid <- c(.05,.1,0.2,.3)
 
 
 get_gym_script_dir <- function() {
@@ -37,6 +37,7 @@ target_eval_seed <- 10002L
 
 summarize_env_results <- function(results, V_true) {
   results %>%
+    filter(method != "DIRECT") %>%
     group_by(tau, method) %>%
     summarize(
       bias = mean(estimate, na.rm = TRUE) - V_true,
@@ -44,14 +45,14 @@ summarize_env_results <- function(results, V_true) {
       sd = sd(estimate, na.rm = TRUE),
       .groups = "drop"
     ) %>%
-    mutate(method = factor(method, levels = c("DIRECT", "FQE", "MIS", "DRL", "LSTD", "MR"))) %>%
+    mutate(method = factor(method, levels = c("FQE", "SIS", "MIS", "DRL", "LSTD", "MR"))) %>%
     arrange(tau, method)
 }
 
 run_cartpole_simulation <- function(dgp, N, TT, mc_eval_N, mc_eval_T,
                                     tau_grid, gamma, n_rep,
                                     offline_data_dir) {
-  methods <- c("DIRECT", "FQE", "MIS", "DRL", "LSTD", "MR")
+  methods <- c("FQE", "SIS", "MIS", "DRL", "LSTD", "MR")
   results <- data.frame(
     rep = integer(0),
     tau = numeric(0),
@@ -181,12 +182,12 @@ plot_cartpole_results <- function(results, V_true) {
   library(dplyr)
   library(ggplot2)
   
-  plot_dat <- results
-  plot_dat$method[plot_dat$method == "DIRECT"] <- "Direct"
+  plot_dat <- results %>%
+    filter(method != "DIRECT")
   plot_dat$method[plot_dat$method == "MR"] <- "LURE"
   plot_dat$method <- factor(
     plot_dat$method,
-    levels = c("Direct", "LURE", "FQE", "MIS", "DRL", "LSTD")
+    levels = c("LURE", "FQE", "SIS", "MIS", "DRL", "LSTD")
   )
   plot_dat$tau_lab <- paste0("tau = ", plot_dat$tau)
   
@@ -205,9 +206,9 @@ plot_cartpole_results <- function(results, V_true) {
     select(-q1, -q3, -iqr, -lower, -upper)
   
   method_cols <- c(
-    "Direct" = "#2F2F2F",
     "LURE"   = "deepskyblue",
     "FQE"    = "#4E79A7",
+    "SIS"    = "#76B7B2",
     "MIS"    = "#59A14F",
     "DRL"    = "#E15759",
     "LSTD"   = "#F28E2B"

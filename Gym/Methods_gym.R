@@ -1177,6 +1177,10 @@ evaluate_gym_estimators <- function(dat, dgp, gamma, seed = NULL) {
     naive_fqe_gym(dat, dgp_rep, gamma)$V_hat,
     error = function(e) NA_real_
   )
+  V_sis <- tryCatch(
+    naive_sis_gym(dat, dgp_rep, gamma)$V_hat,
+    error = function(e) NA_real_
+  )
   V_mis <- tryCatch(
     naive_mis_gym(dat, dgp_rep, gamma)$V_hat,
     error = function(e) NA_real_
@@ -1193,6 +1197,7 @@ evaluate_gym_estimators <- function(dat, dgp, gamma, seed = NULL) {
   c(
     DIRECT = V_direct,
     FQE = V_fqe,
+    SIS = V_sis,
     MIS = V_mis,
     DRL = V_drl,
     LSTD = V_lstd,
