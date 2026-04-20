@@ -163,8 +163,6 @@ run_cartpole_simulation <- function(dgp, N, TT, mc_eval_N, mc_eval_T,
       env = "CartPole",
       V_true = V_true,
       mc_se = truth_out$mc_se,
-      mc_ci_lo = truth_out$ci_lo,
-      mc_ci_hi = truth_out$ci_hi,
       target_path = truth_target_path,
       stringsAsFactors = FALSE
     ),

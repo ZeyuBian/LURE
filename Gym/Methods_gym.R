@@ -12,7 +12,7 @@ gym_clip <- function(x, lo = 1e-2, hi = 1 - 1e-2) {
   pmax(pmin(x, hi), lo)
 }
 
-gym_safe_ratio <- function(num, denom, lambda = 0.01) {
+gym_safe_ratio <- function(num, denom, lambda = 0.003) {
   num * denom / (denom^2 + lambda)
 }
 
@@ -42,7 +42,7 @@ gym_clip_abs_quantile <- function(x, q = 0.96, abs_cap = NULL) {
   pmin(pmax(x, -cap), cap)
 }
 
-gym_reward_quantile_bounds <- function(reward_vec, probs = c(0.10, 0.90)) {
+gym_reward_quantile_bounds <- function(reward_vec, probs = c(0.05, 0.95)) {
   bounds <- as.numeric(stats::quantile(
     reward_vec,
     probs = probs,
@@ -553,8 +553,6 @@ estimate_true_value_gym <- function(dgp, N, TT, gamma, seed = 1L,
   list(
     V_value = v_value,
     mc_se = mc_se,
-    ci_lo = v_value - 1.96 * mc_se,
-    ci_hi = v_value + 1.96 * mc_se,
     eval_dat = eval_dat
   )
 }
@@ -889,7 +887,7 @@ solve_omega_gym <- function(em_out, dat, dgp, gamma, ridge = 0.001) {
   )
 }
 
-weighted_fqe_gym <- function(em_out, dat, dgp, gamma, n_iter = 30, ridge = .001,
+weighted_fqe_gym <- function(em_out, dat, dgp, gamma, n_iter = 40, ridge = .001,
                              spline_df = 6L, spline_degree = 3L) {
   S_mat <- gym_flatten_states(dat$S)
   Sp_mat <- gym_flatten_states(dat$Sp)
