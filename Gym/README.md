@@ -32,7 +32,7 @@ Monte Carlo truth evaluation:
 CartPole details:
 
 - The transition now uses the original deterministic CartPole dynamics plus additive Gaussian noise with standard deviation `0.1` on each next-state coordinate.
-- The reward is `1 - x^2 / 11.52 - theta^2 / 288` plus independent Gaussian noise with standard deviation `0.1`, where `x` is cart position and `theta` is pole angle.
+- The reward is `1 - x^2 / 11.52 - theta^2 / 288 + 0.8 a` plus independent Gaussian noise with standard deviation `0.1`, where `x` is cart position, `theta` is pole angle, and `a` is the true executed binary action.
 
 Bridge-state selection:
 

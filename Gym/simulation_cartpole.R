@@ -185,33 +185,23 @@ plot_cartpole_results <- function(results, V_true) {
   plot_dat <- results %>%
     filter(method != "DIRECT")
   plot_dat$method[plot_dat$method == "MR"] <- "LURE"
-  plot_dat$method <- factor(
-    plot_dat$method,
-    levels = c("LURE", "FQE", "SIS", "MIS", "DRL", "LSTD")
-  )
-  plot_dat$tau_lab <- paste0("tau = ", plot_dat$tau)
-  
-  # Remove outliers within each tau-method group using the 1.5*IQR rule
-  plot_dat <- plot_dat %>%
-    group_by(tau, method) %>%
-    mutate(
-      q1 = quantile(estimate, 0.25, na.rm = TRUE),
-      q3 = quantile(estimate, 0.75, na.rm = TRUE),
-      iqr = q3 - q1,
-      lower = q1 - 1.5 * iqr,
-      upper = q3 + 1.5 * iqr
-    ) %>%
-    filter(estimate >= lower, estimate <= upper) %>%
-    ungroup() %>%
-    select(-q1, -q3, -iqr, -lower, -upper)
   
   method_cols <- c(
     "LURE"   = "deepskyblue",
-    "FQE"    = "#4E79A7",
-    "SIS"    = "#76B7B2",
-    "MIS"    = "#59A14F",
+    "FQE"    = "#59A14F",
+    "SIS"    = "#4E79A7",
+    "MIS"    = "deeppink",
     "DRL"    = "#E15759",
     "LSTD"   = "#F28E2B"
+  )
+  
+  plot_dat$method <- factor(plot_dat$method, levels = names(method_cols))
+  
+  tau_vals <- sort(unique(plot_dat$tau))
+  scenario_levels <- paste0("Scenario ", seq_along(tau_vals))
+  plot_dat$scenario <- factor(
+    paste0("Scenario ", match(plot_dat$tau, tau_vals)),
+    levels = scenario_levels
   )
   
   ggplot(plot_dat, aes(x = method, y = estimate, fill = method)) +
@@ -222,24 +212,30 @@ plot_cartpole_results <- function(results, V_true) {
       linewidth = 0.7
     ) +
     geom_boxplot(
+      outlier.shape = NA,
       alpha = 0.85,
       width = 0.62,
       color = "gray20",
-      linewidth = 0.45
+      linewidth = 0.45,
+      na.rm = TRUE
     ) +
-    facet_wrap(~tau_lab, scales = "free_y") +
+    facet_wrap(
+      ~scenario,
+      scales = "free_y"
+    ) +
     scale_fill_manual(values = method_cols) +
     labs(y = "Estimated Value", x = NULL) +
     theme_minimal(base_size = 15) +
     theme(
       legend.position = "none",
       strip.background = element_rect(fill = "#F3F4F6", color = NA),
-      strip.text = element_text(size = 14, color = "gray15"),
+      strip.text = element_text(size = 15, color = "gray15"),
       panel.grid.minor = element_blank(),
       panel.grid.major.x = element_blank(),
       panel.grid.major.y = element_line(color = "gray85", linewidth = 0.35),
       axis.text.x = element_text(color = "gray15"),
       axis.text.y = element_text(color = "gray20"),
+      plot.title = element_text(size = 18, color = "gray10"),
       plot.margin = margin(10, 15, 10, 10)
     )
 }

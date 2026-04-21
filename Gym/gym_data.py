@@ -14,6 +14,7 @@ except ImportError:
 
 CARTPOLE_TRANSITION_NOISE_SD = 0.1
 CARTPOLE_REWARD_NOISE_SD = 0.1
+CARTPOLE_ACTION_REWARD_COEF = 0.8
 
 
 def sigmoid(x: float) -> float:
@@ -107,7 +108,12 @@ def step_cartpole(env, action: int, rng: np.random.Generator):
         or next_state[2] < -cartpole.theta_threshold_radians
         or next_state[2] > cartpole.theta_threshold_radians
     )
-    reward_mean = 1.0 - (x ** 2) / 11.52 - (theta ** 2) / 288.0
+    reward_mean = (
+        1.0
+        - (x ** 2) / 11.52
+        - (theta ** 2) / 288.0
+        + CARTPOLE_ACTION_REWARD_COEF * float(action)
+    )
     reward = reward_mean + float(rng.normal(loc=0.0, scale=CARTPOLE_REWARD_NOISE_SD))
 
     return next_state, float(reward), terminated, {}
