@@ -186,11 +186,9 @@ def rollout_dataset(env_name: str, dataset: str, n_traj: int, horizon: int,
     for i in range(n_traj):
         obs = reset_env(env, seed + i)
         init_states[i] = obs
-        absorbing = False
-        absorb_state = None
 
         for t in range(horizon):
-            state_t = absorb_state if absorbing else obs
+            state_t = obs
             if not summary_only:
                 S[i, t] = state_t
 
@@ -203,19 +201,12 @@ def rollout_dataset(env_name: str, dataset: str, n_traj: int, horizon: int,
                 A[i, t] = action_bin
                 Atilde[i, t] = observed_action
 
-            if absorbing:
-                next_state = np.array(absorb_state, copy=True)
-                reward = 0.0
-            else:
-                next_state, reward, done, _ = step_env(
-                    env,
-                    binary_to_env_action(env_name, action_bin),
-                    rng,
-                    noisy_state=None,
-                )
-                if done:
-                    absorbing = True
-                    absorb_state = np.array(next_state, copy=True)
+            next_state, reward, _, _ = step_env(
+                env,
+                binary_to_env_action(env_name, action_bin),
+                rng,
+                noisy_state=None,
+            )
 
             if not summary_only:
                 Sp[i, t] = next_state

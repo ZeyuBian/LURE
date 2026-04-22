@@ -142,7 +142,7 @@ naive_drl_gym <- function(dat, dgp, gamma) {
 
 naive_sis_gym <- function(dat, dgp, gamma,
                           min_prob = 0.01, max_ratio = 10,
-                          max_weight = 50, normalize = F,
+                          max_weight = 50, normalize = T,
                           behavior_model = c("state", "intercept")) {
   n_traj <- dim(dat$S)[1]
   TT <- dim(dat$S)[2]
