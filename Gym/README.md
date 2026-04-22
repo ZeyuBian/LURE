@@ -27,12 +27,14 @@ Monte Carlo truth evaluation:
 - Offline experiments use `N = 50` and `T = 50`.
 - Target-policy Monte Carlo evaluation uses `N = 10000` and `T = 2000`.
 - Large target-policy evaluations can use a summary-only payload with initial states and discounted returns instead of full trajectories.
+- For CartPole, the saved target-policy `init_states` use the same true-state convention as the offline data.
 - Saved target-policy MC files are keyed by `N`, `T`, `gamma`, and `seed`, since discounted returns depend on `gamma`.
 
 CartPole details:
 
-- The transition now uses the original deterministic CartPole dynamics plus additive Gaussian noise with standard deviation `0.1` on each next-state coordinate.
-- The reward is `1 - x^2 / 11.52 - theta^2 / 288 + 0.8 a` plus independent Gaussian noise with standard deviation `0.1`, where `x` is cart position, `theta` is pole angle, and `a` is the true executed binary action.
+- CartPole uses the true environment state as the canonical saved state. The recorded `init_states`, current-state tensor `S`, and next-state tensor `Sp` all follow that true-state convention.
+- The transition now uses the original deterministic CartPole dynamics with no added next-state noise, so all saved state variables remain clean.
+- The reward is `1 - x^2 / 11.52 - theta^2 / 288 + 0.8 a` plus independent Gaussian noise with standard deviation `0.1`, where `x` is cart position and `theta` is pole angle from the current true state, and `a` is the true executed binary action.
 
 Bridge-state selection:
 

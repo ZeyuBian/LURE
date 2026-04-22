@@ -12,7 +12,7 @@ gym_clip <- function(x, lo = 1e-2, hi = 1 - 1e-2) {
   pmax(pmin(x, hi), lo)
 }
 
-gym_safe_ratio <- function(num, denom, lambda = 0.003) {
+gym_safe_ratio <- function(num, denom, lambda = 0.0005) {
   num * denom / (denom^2 + lambda)
 }
 
@@ -31,7 +31,7 @@ gym_safe_abs_cor <- function(x, y) {
   abs(stats::cor(x, y))
 }
 
-gym_clip_abs_quantile <- function(x, q = 0.96, abs_cap = NULL) {
+gym_clip_abs_quantile <- function(x, q = 0.98, abs_cap = NULL) {
   cap <- as.numeric(quantile(abs(x), q, na.rm = TRUE, names = FALSE))
   if (!is.null(abs_cap) && is.finite(abs_cap)) {
     cap <- min(cap, abs_cap)
@@ -42,7 +42,7 @@ gym_clip_abs_quantile <- function(x, q = 0.96, abs_cap = NULL) {
   pmin(pmax(x, -cap), cap)
 }
 
-gym_reward_quantile_bounds <- function(reward_vec, probs = c(0.05, 0.95)) {
+gym_reward_quantile_bounds <- function(reward_vec, probs = c(0.02, 0.98)) {
   bounds <- as.numeric(stats::quantile(
     reward_vec,
     probs = probs,
@@ -122,7 +122,7 @@ gym_model_formula <- function(response, k) {
 }
 
 gym_weighted_ridge_fit <- function(state_mat, response_vec,
-                                   weights = NULL, ridge = 0.001) {
+                                   weights = NULL, ridge = 0.0005) {
   x_mat <- gym_poly_features(state_mat)
   if (is.null(weights)) {
     weights <- rep(1, nrow(x_mat))
@@ -215,7 +215,7 @@ gym_spline_features <- function(state_mat, specs = NULL,
 }
 
 gym_weighted_spline_ridge_fit <- function(state_mat, response_vec,
-                                          weights = NULL, ridge = 0.001,
+                                          weights = NULL, ridge = 0.0005,
                                           spline_df = 6L,
                                           spline_degree = 3L) {
   spline_fit <- gym_spline_features(state_mat, df = spline_df, degree = spline_degree)
@@ -654,7 +654,7 @@ gym_poly_policy_features <- function(state_mat, pi_func) {
 
     fit_b <- lm(form_eta,
                 data = cbind(data.frame(eta1 = eta[, 2]), df_s))
-    b_hat <- gym_clip(fitted(fit_b), 0.04, 0.96)
+    b_hat <- gym_clip(fitted(fit_b), 0.02, 0.98)
 
     fit_mu0 <- glm(form_at, family = quasibinomial(),
                    weights = w0,
@@ -662,8 +662,8 @@ gym_poly_policy_features <- function(state_mat, pi_func) {
     fit_mu1 <- glm(form_at, family = quasibinomial(),
                    weights = w1,
                    data = cbind(data.frame(at = At_vec, w1 = w1), df_s))
-    mu_hat_0 <- gym_clip(fitted(fit_mu0), 0.04, 0.96)
-    mu_hat_1 <- gym_clip(fitted(fit_mu1), 0.04, 0.96)
+    mu_hat_0 <- gym_clip(fitted(fit_mu0), 0.02, 0.98)
+    mu_hat_1 <- gym_clip(fitted(fit_mu1), 0.02, 0.98)
 
     fit_R0 <- lm(form_r, weights = w0,
                  data = cbind(data.frame(r = R_vec, w0 = w0), df_s))
@@ -815,11 +815,11 @@ em_gym <- function(dat, gamma, max_iter = 90, tol = 1e-3,
   predict_mu <- function(state_new, a) {
     fit <- if (a == 0) fit_mu0 else fit_mu1
     gym_clip(predict(fit, newdata = gym_model_feature_df(state_new), type = "response"),
-             0.04, 0.96)
+             0.02, 0.98)
   }
 
   predict_b <- function(state_new) {
-    gym_clip(predict(fit_b, newdata = gym_model_feature_df(state_new)), 0.04, 0.96)
+    gym_clip(predict(fit_b, newdata = gym_model_feature_df(state_new)), 0.02, 0.98)
   }
 
   list(
@@ -842,7 +842,7 @@ em_gym <- function(dat, gamma, max_iter = 90, tol = 1e-3,
   )
 }
 
-solve_omega_gym <- function(em_out, dat, dgp, gamma, ridge = 0.001) {
+solve_omega_gym <- function(em_out, dat, dgp, gamma, ridge = 0.0005) {
   S_mat <- gym_flatten_states(dat$S)
   Sp_mat <- gym_flatten_states(dat$Sp)
   eta <- em_out$eta
@@ -887,7 +887,7 @@ solve_omega_gym <- function(em_out, dat, dgp, gamma, ridge = 0.001) {
   )
 }
 
-weighted_fqe_gym <- function(em_out, dat, dgp, gamma, n_iter = 40, ridge = .001,
+weighted_fqe_gym <- function(em_out, dat, dgp, gamma, n_iter = 40, ridge = .0005,
                              spline_df = 6L, spline_degree = 3L) {
   S_mat <- gym_flatten_states(dat$S)
   Sp_mat <- gym_flatten_states(dat$Sp)
@@ -973,7 +973,7 @@ weighted_fqe_gym <- function(em_out, dat, dgp, gamma, n_iter = 40, ridge = .001,
 compute_eta_outfold_gym <- function(em, S_te, At_te, R_te, Sp_te) {
   n <- nrow(S_te)
   d <- ncol(S_te)
-  b_hat <- gym_clip(em$predict_b(S_te), 0.04, 0.96)
+  b_hat <- gym_clip(em$predict_b(S_te), 0.02, 0.98)
   mu_hat_0 <- em$predict_mu(S_te, 0)
   mu_hat_1 <- em$predict_mu(S_te, 1)
   tR0 <- em$predict_theta_R(S_te, 0)

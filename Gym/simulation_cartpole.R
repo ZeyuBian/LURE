@@ -2,13 +2,13 @@
 ## CartPole Simulation for LURE
 ################################################################################
 
-gamma <- 0.9
+gamma <- 0.85
 N <- 50
 TT <- 50
 mc_eval_N <- 10000
 mc_eval_T <- 500
-n_rep <- 100
-tau_grid <- c(.05,.1,0.2,.3)
+n_rep <- 20
+tau_grid <- c(0.2,.3)
 
 
 get_gym_script_dir <- function() {

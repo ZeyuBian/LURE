@@ -3,6 +3,7 @@
 import argparse
 import json
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 
@@ -12,7 +13,6 @@ except ImportError:
     import gym
 
 
-CARTPOLE_TRANSITION_NOISE_SD = 0.1
 CARTPOLE_REWARD_NOISE_SD = 0.1
 CARTPOLE_ACTION_REWARD_COEF = 0.8
 
@@ -60,9 +60,9 @@ def reset_env(env, seed: int) -> np.ndarray:
     return np.asarray(obs, dtype=float)
 
 
-def step_env(env, action: int, rng: np.random.Generator):
+def step_env(env, action: int, rng: np.random.Generator, noisy_state: Optional[np.ndarray] = None):
     if env.spec is not None and env.spec.id == "CartPole-v1":
-        return step_cartpole(env, action, rng)
+        return step_cartpole(env, action, rng, noisy_state=noisy_state)
 
     out = env.step(action)
     if len(out) == 5:
@@ -73,9 +73,14 @@ def step_env(env, action: int, rng: np.random.Generator):
     return np.asarray(obs, dtype=float), float(reward), bool(done), info
 
 
-def step_cartpole(env, action: int, rng: np.random.Generator):
+def step_cartpole(env, action: int, rng: np.random.Generator, noisy_state: Optional[np.ndarray] = None):
     cartpole = env.unwrapped
-    x, x_dot, theta, theta_dot = [float(v) for v in cartpole.state]
+    if noisy_state is None:
+        noisy_state = np.asarray(cartpole.state, dtype=float)
+    noisy_state = np.asarray(noisy_state, dtype=float)
+    reward_x = float(noisy_state[0])
+    reward_theta = float(noisy_state[2])
+    x, x_dot, theta, theta_dot = [float(v) for v in noisy_state]
 
     force = cartpole.force_mag if int(action) == 1 else -cartpole.force_mag
     costheta = np.cos(theta)
@@ -98,8 +103,7 @@ def step_cartpole(env, action: int, rng: np.random.Generator):
         theta_dot = theta_dot + cartpole.tau * thetaacc
         theta = theta + cartpole.tau * theta_dot
 
-    noise = rng.normal(loc=0.0, scale=CARTPOLE_TRANSITION_NOISE_SD, size=4)
-    next_state = np.asarray([x, x_dot, theta, theta_dot], dtype=float) + noise
+    next_state = np.asarray([x, x_dot, theta, theta_dot], dtype=float)
     cartpole.state = tuple(float(v) for v in next_state)
 
     terminated = bool(
@@ -110,8 +114,8 @@ def step_cartpole(env, action: int, rng: np.random.Generator):
     )
     reward_mean = (
         1.0
-        - (x ** 2) / 11.52
-        - (theta ** 2) / 288.0
+        - (reward_x ** 2) / 11.52
+        - (reward_theta ** 2) / 288.0
         + CARTPOLE_ACTION_REWARD_COEF * float(action)
     )
     reward = reward_mean + float(rng.normal(loc=0.0, scale=CARTPOLE_REWARD_NOISE_SD))
@@ -207,6 +211,7 @@ def rollout_dataset(env_name: str, dataset: str, n_traj: int, horizon: int,
                     env,
                     binary_to_env_action(env_name, action_bin),
                     rng,
+                    noisy_state=None,
                 )
                 if done:
                     absorbing = True

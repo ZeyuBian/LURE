@@ -336,7 +336,7 @@ FQE <- function(S, A, R, H, pi1, gamma, fqe_iter = 50) {
 # DRL — Double Reinforcement Learning  (FQE + MIS)
 # ==============================================================================
 DRL <- function(S, A, R, H, pi1, phi = NULL, gamma,
-                fqe_iter = 50, mis_ridge = 0.005) {
+                fqe_iter = 50, mis_ridge = 0.001) {
   
   S <- as.data.frame(S)
   N <- nrow(S) / H
@@ -473,7 +473,7 @@ SIS <- function(S_mat, A_mat, R_mat, pi1, gamma, b_hat = NULL,
 # ==============================================================================
 # LSTD — Least-Squares Temporal Difference (tabular)
 # ==============================================================================
-LSTD <- function(S, A, R, H, pi1, gamma, ridge = 0.001) {
+LSTD <- function(S, A, R, H, pi1, gamma, ridge = 0.0008) {
   S <- .coerce_tabular_state(S)
   N <- length(A) / H
 
@@ -962,7 +962,7 @@ one_rep <- function(dgp, N, TT, epsilon, gamma) {
     out <- DRL(
       S = st$S, A = st$A, R = st$R, H = st$H,
       pi1 = pi1_func, phi = phi_tab,
-      gamma = gamma, fqe_iter = 30, mis_ridge = 0.005
+      gamma = gamma, fqe_iter = 30, mis_ridge = 0.001
     )
     V_fqe <- out$Vhat_FQE
     V_mis <- out$Vhat_MIS
