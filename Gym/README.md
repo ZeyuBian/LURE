@@ -21,7 +21,7 @@ State convention:
 
 Target policy:
 
-- For CartPole, the current target policy is stochastic with probability `expit(0.10 x + 0.25 x_dot + 1.20 theta + 0.35 theta_dot)` of action `1`.
+- For CartPole, the current target policy is deterministic with action `1` iff `I(x > 0, x_dot < 0, theta > 0, theta_dot < 0) = 1`.
 - For MountainCar, the current target policy remains randomized and state-independent with action `1` probability `0.5`.
 
 Behavior policy:

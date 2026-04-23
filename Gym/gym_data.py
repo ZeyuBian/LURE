@@ -39,8 +39,7 @@ def target_policy(env_name: str, state: np.ndarray) -> float:
     if env_name == "MountainCar-v0":
         return 0.5
     if env_name == "CartPole-v1":
-        score = 0.10 * state[0] + 0.25 * state[1] + 1.20 * state[2] + 0.35 * state[3]
-        return sigmoid(score)
+        return float(state[0] > 0 and state[1] < 0 and state[2] > 0 and state[3] < 0)
     raise ValueError(f"Unsupported environment: {env_name}")
 
 

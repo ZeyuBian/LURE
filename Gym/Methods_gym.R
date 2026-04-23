@@ -474,8 +474,8 @@ mountain_car_target_policy <- function(state_mat) {
 
 cartpole_target_policy <- function(state_mat) {
   state_mat <- as.matrix(state_mat)
-  gym_expit(0.10 * state_mat[, 1] + 0.25 * state_mat[, 2] +
-              1.20 * state_mat[, 3] + 0.35 * state_mat[, 4])
+  as.numeric(state_mat[, 1] > 0 & state_mat[, 2] < 0 &
+               state_mat[, 3] > 0 & state_mat[, 4] < 0)
 }
 
 generate_gym_dgp <- function(env_name, bridge_index = NULL,
