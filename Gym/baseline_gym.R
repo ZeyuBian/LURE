@@ -54,7 +54,7 @@ gym_poly_policy_features <- function(state_mat, pi_func) {
   out
 }
 
-naive_fqe_gym <- function(dat, dgp, gamma, n_iter = 50, ridge = .01) {
+naive_fqe_gym <- function(dat, dgp, gamma, n_iter = 20, ridge = .01) {
   S_mat <- gym_flatten_states(dat$S)
   Sp_mat <- gym_flatten_states(dat$Sp)
   At_vec <- as.vector(dat$Atilde)
@@ -97,7 +97,7 @@ naive_fqe_gym <- function(dat, dgp, gamma, n_iter = 50, ridge = .01) {
        fit_Q0 = fit_Q0, fit_Q1 = fit_Q1)
 }
 
-naive_mis_gym <- function(dat, dgp, gamma, ridge = 0.005) {
+naive_mis_gym <- function(dat, dgp, gamma, ridge = .001) {
   S_mat <- gym_flatten_states(dat$S)
   Sp_mat <- gym_flatten_states(dat$Sp)
   At_vec <- as.vector(dat$Atilde)
@@ -142,7 +142,7 @@ naive_drl_gym <- function(dat, dgp, gamma) {
 
 naive_sis_gym <- function(dat, dgp, gamma,
                           min_prob = 0.01, max_ratio = 10,
-                          max_weight = 50, normalize = T,
+                          max_weight = 20, normalize = T,
                           behavior_model = c("state", "intercept")) {
   n_traj <- dim(dat$S)[1]
   TT <- dim(dat$S)[2]
@@ -230,7 +230,7 @@ naive_sis_gym <- function(dat, dgp, gamma,
   )
 }
 
-naive_lstd_gym <- function(dat, dgp, gamma, ridge = 0.001) {
+naive_lstd_gym <- function(dat, dgp, gamma, ridge = .0012) {
   S_mat <- gym_flatten_states(dat$S)
   Sp_mat <- gym_flatten_states(dat$Sp)
   At_vec <- as.vector(dat$Atilde)

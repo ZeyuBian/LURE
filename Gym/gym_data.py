@@ -13,8 +13,10 @@ except ImportError:
     import gym
 
 
-CARTPOLE_REWARD_NOISE_SD = 0.1
-CARTPOLE_ACTION_REWARD_COEF = 0.8
+STATE_NOISE_SD = 0.05
+CARTPOLE_REWARD_NOISE_SD = 0.2
+CARTPOLE_ACTION_TRANSITION_COEF = 0
+CARTPOLE_ACTION_REWARD_COEF = 2
 
 
 def sigmoid(x: float) -> float:
@@ -60,17 +62,31 @@ def reset_env(env, seed: int) -> np.ndarray:
     return np.asarray(obs, dtype=float)
 
 
+def add_state_noise(state: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    state = np.asarray(state, dtype=float)
+    return state + rng.normal(loc=0.0, scale=STATE_NOISE_SD, size=state.shape)
+
+
 def step_env(env, action: int, rng: np.random.Generator, noisy_state: Optional[np.ndarray] = None):
     if env.spec is not None and env.spec.id == "CartPole-v1":
         return step_cartpole(env, action, rng, noisy_state=noisy_state)
+
+    if noisy_state is not None and hasattr(env.unwrapped, "state"):
+        env.unwrapped.state = np.asarray(noisy_state, dtype=float).copy()
 
     out = env.step(action)
     if len(out) == 5:
         obs, reward, terminated, truncated, info = out
         done = bool(terminated or truncated)
-        return np.asarray(obs, dtype=float), float(reward), done, info
+        next_state = add_state_noise(np.asarray(obs, dtype=float), rng)
+        if hasattr(env.unwrapped, "state"):
+            env.unwrapped.state = next_state.copy()
+        return next_state, float(reward), done, info
     obs, reward, done, info = out
-    return np.asarray(obs, dtype=float), float(reward), bool(done), info
+    next_state = add_state_noise(np.asarray(obs, dtype=float), rng)
+    if hasattr(env.unwrapped, "state"):
+        env.unwrapped.state = next_state.copy()
+    return next_state, float(reward), bool(done), info
 
 
 def step_cartpole(env, action: int, rng: np.random.Generator, noisy_state: Optional[np.ndarray] = None):
@@ -103,7 +119,9 @@ def step_cartpole(env, action: int, rng: np.random.Generator, noisy_state: Optio
         theta_dot = theta_dot + cartpole.tau * thetaacc
         theta = theta + cartpole.tau * theta_dot
 
-    next_state = np.asarray([x, x_dot, theta, theta_dot], dtype=float)
+    next_state_mean = np.asarray([x, x_dot, theta, theta_dot], dtype=float)
+    next_state_mean = next_state_mean + CARTPOLE_ACTION_TRANSITION_COEF * float(action)
+    next_state = add_state_noise(next_state_mean, rng)
     cartpole.state = tuple(float(v) for v in next_state)
 
     terminated = bool(
@@ -186,6 +204,7 @@ def rollout_dataset(env_name: str, dataset: str, n_traj: int, horizon: int,
     for i in range(n_traj):
         obs = reset_env(env, seed + i)
         init_states[i] = obs
+        obs = add_state_noise(obs, rng)
 
         for t in range(horizon):
             state_t = obs
@@ -205,7 +224,7 @@ def rollout_dataset(env_name: str, dataset: str, n_traj: int, horizon: int,
                 env,
                 binary_to_env_action(env_name, action_bin),
                 rng,
-                noisy_state=None,
+                noisy_state=state_t,
             )
 
             if not summary_only:
