@@ -21,7 +21,7 @@ State convention:
 
 Target policy:
 
-- For CartPole, the current target policy is deterministic with action `1` iff `I(x > 0, x_dot < 0, theta > 0, theta_dot < 0) = 1`.
+- For CartPole, the current target policy is deterministic with action `1` iff `I(S_1 > 0, S_3 > 0) = 1`, using the same two state coordinates that enter the reward function (`x` and `theta`).
 - For MountainCar, the current target policy remains randomized and state-independent with action `1` probability `0.5`.
 
 Behavior policy:
@@ -61,3 +61,9 @@ Dependencies:
 Usage:
 
 Run either `simulation_mountaincar.R` or `simulation_cartpole.R` from this folder, or set `options(lure.gym.dir = '<path-to-Gym>')` before sourcing the files from another working directory.
+
+To generate multiple offline datasets from the same clean rollout with one command, use `gym_data.py --dataset offline --taus ...`. If `--output` contains `{tau}`, the placeholder is replaced per corruption level; otherwise files are written under `tau_<value>/seed_<seed>.json` below the given output directory.
+
+Example:
+
+`python3 gym_data.py --env CartPole-v1 --dataset offline --N 50 --T 50 --taus 0.05 0.10 0.20 0.30 --seed 1 --output './CartPole-v1/tau_{tau}/rep_001.json'`

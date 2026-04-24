@@ -13,10 +13,12 @@ except ImportError:
     import gym
 
 
-STATE_NOISE_SD = 0.05
+STATE_NOISE_SD = 0.1
 CARTPOLE_REWARD_NOISE_SD = 0.2
 CARTPOLE_ACTION_TRANSITION_COEF = 0
 CARTPOLE_ACTION_REWARD_COEF = 2
+CARTPOLE_REWARD_X_INDEX = 0
+CARTPOLE_REWARD_THETA_INDEX = 2
 
 
 def sigmoid(x: float) -> float:
@@ -25,6 +27,10 @@ def sigmoid(x: float) -> float:
 
 def clip_prob(p: float) -> float:
     return float(np.clip(p, 0.15, 0.85))
+
+
+def format_tau(tau: float) -> str:
+    return f"{tau:.2f}"
 
 
 def binary_to_env_action(env_name: str, action_bin: int) -> int:
@@ -39,7 +45,10 @@ def target_policy(env_name: str, state: np.ndarray) -> float:
     if env_name == "MountainCar-v0":
         return 0.5
     if env_name == "CartPole-v1":
-        return float(state[0] > 0 and state[1] < 0 and state[2] > 0 and state[3] < 0)
+        return float(
+            state[CARTPOLE_REWARD_X_INDEX] > 0
+            and state[CARTPOLE_REWARD_THETA_INDEX] > 0
+        )
     raise ValueError(f"Unsupported environment: {env_name}")
 
 
@@ -93,8 +102,8 @@ def step_cartpole(env, action: int, rng: np.random.Generator, noisy_state: Optio
     if noisy_state is None:
         noisy_state = np.asarray(cartpole.state, dtype=float)
     noisy_state = np.asarray(noisy_state, dtype=float)
-    reward_x = float(noisy_state[0])
-    reward_theta = float(noisy_state[2])
+    reward_x = float(noisy_state[CARTPOLE_REWARD_X_INDEX])
+    reward_theta = float(noisy_state[CARTPOLE_REWARD_THETA_INDEX])
     x, x_dot, theta, theta_dot = [float(v) for v in noisy_state]
 
     force = cartpole.force_mag if int(action) == 1 else -cartpole.force_mag
@@ -174,7 +183,17 @@ def derive_offline_dataset_from_oracle(oracle_payload: dict, tau: float, seed: i
 
 
 def write_payload(payload: dict, output_path: Path) -> None:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def resolve_multi_tau_output_path(output_arg: str, tau: float, seed: int) -> Path:
+    tau_str = format_tau(tau)
+    if "{tau}" in output_arg:
+        return Path(output_arg.format(tau=tau_str, seed=seed))
+
+    output_root = Path(output_arg)
+    return output_root / f"tau_{tau_str}" / f"seed_{seed}.json"
 
 
 def rollout_dataset(env_name: str, dataset: str, n_traj: int, horizon: int,
@@ -261,7 +280,8 @@ def main() -> None:
     parser.add_argument("--dataset", choices=["offline", "target"], required=True)
     parser.add_argument("--N", type=int, required=True)
     parser.add_argument("--T", type=int, required=True)
-    parser.add_argument("--tau", type=float, default=0.0)
+    parser.add_argument("--tau", type=float, default=None)
+    parser.add_argument("--taus", nargs="+", type=float)
     parser.add_argument("--gamma", type=float, default=0.99)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--output", required=True)
@@ -271,12 +291,39 @@ def main() -> None:
     if args.summary_only and args.dataset != "target":
         raise ValueError("--summary-only is only supported for target datasets.")
 
+    taus = args.taus if args.taus is not None else [0.0 if args.tau is None else args.tau]
+    if args.dataset != "offline" and len(taus) > 1:
+        raise ValueError("--taus is only supported for offline datasets.")
+
+    if len(taus) > 1:
+        oracle_payload = rollout_dataset(
+            env_name=args.env,
+            dataset="offline",
+            n_traj=args.N,
+            horizon=args.T,
+            tau=0.0,
+            gamma=args.gamma,
+            seed=args.seed,
+            summary_only=False,
+            apply_label_noise=False,
+        )
+
+        for tau in taus:
+            payload = derive_offline_dataset_from_oracle(
+                oracle_payload,
+                tau=tau,
+                seed=args.seed,
+            )
+            output_path = resolve_multi_tau_output_path(args.output, tau=tau, seed=args.seed)
+            write_payload(payload, output_path)
+        return
+
     payload = rollout_dataset(
         env_name=args.env,
         dataset=args.dataset,
         n_traj=args.N,
         horizon=args.T,
-        tau=args.tau,
+        tau=taus[0],
         gamma=args.gamma,
         seed=args.seed,
         summary_only=args.summary_only,
