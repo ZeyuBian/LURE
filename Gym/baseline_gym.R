@@ -2,59 +2,156 @@
 ## Baselines for Gym Environments
 ################################################################################
 
-gym_poly_features <- function(state_mat, include_intercept = TRUE) {
+GYM_BASELINE_SPLINE_DF <- 6L
+GYM_BASELINE_SPLINE_DEGREE <- 3L
+
+gym_baseline_spline_features <- function(state_mat, specs = NULL,
+                                         df = GYM_BASELINE_SPLINE_DF,
+                                         degree = GYM_BASELINE_SPLINE_DEGREE,
+                                         include_intercept = TRUE) {
+  if (!requireNamespace("splines", quietly = TRUE)) {
+    stop("Package 'splines' is required for spline-based Gym baselines.")
+  }
+
   state_mat <- as.matrix(state_mat)
   n <- nrow(state_mat)
   d <- ncol(state_mat)
 
-  feat_list <- list()
-  if (include_intercept) {
-    feat_list[[length(feat_list) + 1L]] <- rep(1, n)
-  }
-  for (j in seq_len(d)) {
-    feat_list[[length(feat_list) + 1L]] <- state_mat[, j]
-  }
-  for (j in seq_len(d)) {
-    feat_list[[length(feat_list) + 1L]] <- state_mat[, j]^2
-  }
-  if (d >= 2L) {
-    for (j in 1:(d - 1L)) {
-      for (k in (j + 1L):d) {
-        feat_list[[length(feat_list) + 1L]] <- state_mat[, j] * state_mat[, k]
-      }
-    }
+  if (is.null(specs)) {
+    specs <- vector("list", d)
   }
 
-  do.call(cbind, feat_list)
+  feat_list <- vector("list", d + as.integer(include_intercept))
+  idx <- 1L
+
+  if (include_intercept) {
+    feat_list[[idx]] <- rep(1, n)
+    idx <- idx + 1L
+  }
+
+  for (j in seq_len(d)) {
+    x <- as.numeric(state_mat[, j])
+
+    if (is.null(specs[[j]])) {
+      boundary_knots <- range(x, na.rm = TRUE)
+      if (!all(is.finite(boundary_knots)) || diff(boundary_knots) < 1e-8) {
+        basis_j <- matrix(0, nrow = n, ncol = 1L)
+        specs[[j]] <- list(type = "constant_zero")
+      } else {
+        basis_j <- splines::bs(
+          x,
+          df = df,
+          degree = degree,
+          intercept = FALSE,
+          Boundary.knots = boundary_knots,
+          warn.outside = FALSE
+        )
+        specs[[j]] <- list(
+          type = "bs",
+          knots = attr(basis_j, "knots"),
+          Boundary.knots = attr(basis_j, "Boundary.knots"),
+          degree = attr(basis_j, "degree"),
+          intercept = FALSE
+        )
+      }
+    } else if (identical(specs[[j]]$type, "constant_zero")) {
+      basis_j <- matrix(0, nrow = n, ncol = 1L)
+    } else {
+      basis_j <- splines::bs(
+        x,
+        knots = specs[[j]]$knots,
+        degree = specs[[j]]$degree,
+        intercept = specs[[j]]$intercept,
+        Boundary.knots = specs[[j]]$Boundary.knots,
+        warn.outside = FALSE
+      )
+    }
+
+    feat_list[[idx]] <- basis_j
+    idx <- idx + 1L
+  }
+
+  list(x_mat = do.call(cbind, feat_list), specs = specs)
 }
 
-gym_poly_action_features <- function(state_mat, action_vec) {
-  pf <- gym_poly_features(state_mat)
+gym_baseline_action_feature_matrix <- function(basis_mat, action_vec) {
   action_vec <- as.integer(action_vec)
-  k <- ncol(pf)
-  out <- matrix(0, nrow(pf), 2L * k)
+  k <- ncol(basis_mat)
+  out <- matrix(0, nrow(basis_mat), 2L * k)
   idx0 <- which(action_vec == 0L)
   idx1 <- which(action_vec == 1L)
   if (length(idx0) > 0L) {
-    out[idx0, seq_len(k)] <- pf[idx0, , drop = FALSE]
+    out[idx0, seq_len(k)] <- basis_mat[idx0, , drop = FALSE]
   }
   if (length(idx1) > 0L) {
-    out[idx1, k + seq_len(k)] <- pf[idx1, , drop = FALSE]
+    out[idx1, k + seq_len(k)] <- basis_mat[idx1, , drop = FALSE]
   }
   out
 }
 
-gym_poly_policy_features <- function(state_mat, pi_func) {
-  pf <- gym_poly_features(state_mat)
-  pi_s <- pi_func(state_mat)
-  k <- ncol(pf)
-  out <- matrix(0, nrow(pf), 2L * k)
-  out[, seq_len(k)] <- (1 - pi_s) * pf
-  out[, k + seq_len(k)] <- pi_s * pf
+gym_baseline_policy_feature_matrix <- function(basis_mat, pi_s) {
+  k <- ncol(basis_mat)
+  out <- matrix(0, nrow(basis_mat), 2L * k)
+  out[, seq_len(k)] <- (1 - pi_s) * basis_mat
+  out[, k + seq_len(k)] <- pi_s * basis_mat
   out
 }
 
-naive_fqe_gym <- function(dat, dgp, gamma, n_iter = 20, ridge = .01) {
+gym_poly_features <- function(state_mat, include_intercept = TRUE,
+                              specs = NULL,
+                              spline_df = GYM_BASELINE_SPLINE_DF,
+                              spline_degree = GYM_BASELINE_SPLINE_DEGREE,
+                              return_specs = FALSE) {
+  feat_fit <- gym_baseline_spline_features(
+    state_mat,
+    specs = specs,
+    df = spline_df,
+    degree = spline_degree,
+    include_intercept = include_intercept
+  )
+  if (return_specs) {
+    return(feat_fit)
+  }
+  feat_fit$x_mat
+}
+
+gym_poly_action_features <- function(state_mat, action_vec, specs = NULL,
+                                     spline_df = GYM_BASELINE_SPLINE_DF,
+                                     spline_degree = GYM_BASELINE_SPLINE_DEGREE,
+                                     return_specs = FALSE) {
+  feat_fit <- gym_poly_features(
+    state_mat,
+    specs = specs,
+    spline_df = spline_df,
+    spline_degree = spline_degree,
+    return_specs = TRUE
+  )
+  out <- gym_baseline_action_feature_matrix(feat_fit$x_mat, action_vec)
+  if (return_specs) {
+    return(list(x_mat = out, specs = feat_fit$specs))
+  }
+  out
+}
+
+gym_poly_policy_features <- function(state_mat, pi_func, specs = NULL,
+                                     spline_df = GYM_BASELINE_SPLINE_DF,
+                                     spline_degree = GYM_BASELINE_SPLINE_DEGREE,
+                                     return_specs = FALSE) {
+  feat_fit <- gym_poly_features(
+    state_mat,
+    specs = specs,
+    spline_df = spline_df,
+    spline_degree = spline_degree,
+    return_specs = TRUE
+  )
+  out <- gym_baseline_policy_feature_matrix(feat_fit$x_mat, pi_func(state_mat))
+  if (return_specs) {
+    return(list(x_mat = out, specs = feat_fit$specs))
+  }
+  out
+}
+
+naive_fqe_gym <- function(dat, dgp, gamma, n_iter = 20, ridge = 0) {
   S_mat <- gym_flatten_states(dat$S)
   Sp_mat <- gym_flatten_states(dat$Sp)
   At_vec <- as.vector(dat$Atilde)
@@ -97,20 +194,24 @@ naive_fqe_gym <- function(dat, dgp, gamma, n_iter = 20, ridge = .01) {
        fit_Q0 = fit_Q0, fit_Q1 = fit_Q1)
 }
 
-naive_mis_gym <- function(dat, dgp, gamma, ridge = .001) {
+naive_mis_gym <- function(dat, dgp, gamma, ridge = .0001) {
   S_mat <- gym_flatten_states(dat$S)
   Sp_mat <- gym_flatten_states(dat$Sp)
   At_vec <- as.vector(dat$Atilde)
   R_vec <- as.vector(dat$R)
   n <- nrow(S_mat)
 
-  phi_obs <- gym_poly_action_features(S_mat, At_vec)
-  phi_pi_sp <- gym_poly_policy_features(Sp_mat, dgp$pi_func)
+  feat_fit <- gym_poly_features(S_mat, return_specs = TRUE)
+  basis_specs <- feat_fit$specs
+  phi_obs <- gym_baseline_action_feature_matrix(feat_fit$x_mat, At_vec)
+  phi_pi_sp <- gym_poly_policy_features(Sp_mat, dgp$pi_func, specs = basis_specs)
   diff_mat <- phi_obs - gamma * phi_pi_sp
   a_mat <- crossprod(diff_mat, phi_obs) / n
 
   init_states <- gym_draw_initial_states(dgp, 5000)
-  b_vec <- (1 - gamma) * colMeans(gym_poly_policy_features(init_states, dgp$pi_func))
+  b_vec <- (1 - gamma) * colMeans(
+    gym_poly_policy_features(init_states, dgp$pi_func, specs = basis_specs)
+  )
 
   beta_hat <- solve(a_mat + ridge * diag(ncol(phi_obs)), b_vec)
   omega_hat <- drop(phi_obs %*% beta_hat)
@@ -230,21 +331,25 @@ naive_sis_gym <- function(dat, dgp, gamma,
   )
 }
 
-naive_lstd_gym <- function(dat, dgp, gamma, ridge = .0012) {
+naive_lstd_gym <- function(dat, dgp, gamma, ridge = .00012) {
   S_mat <- gym_flatten_states(dat$S)
   Sp_mat <- gym_flatten_states(dat$Sp)
   At_vec <- as.vector(dat$Atilde)
   R_vec <- as.vector(dat$R)
   n <- nrow(S_mat)
 
-  phi_obs <- gym_poly_action_features(S_mat, At_vec)
-  phi_pi_sp <- gym_poly_policy_features(Sp_mat, dgp$pi_func)
+  feat_fit <- gym_poly_features(S_mat, return_specs = TRUE)
+  basis_specs <- feat_fit$specs
+  phi_obs <- gym_baseline_action_feature_matrix(feat_fit$x_mat, At_vec)
+  phi_pi_sp <- gym_poly_policy_features(Sp_mat, dgp$pi_func, specs = basis_specs)
   a_mat <- crossprod(phi_obs, phi_obs - gamma * phi_pi_sp) / n
   b_vec <- drop(crossprod(phi_obs, R_vec)) / n
 
   w_hat <- solve(a_mat + ridge * diag(ncol(phi_obs)), b_vec)
   init_states <- gym_draw_initial_states(dgp, 5000)
-  V_hat <- mean(drop(gym_poly_policy_features(init_states, dgp$pi_func) %*% w_hat))
+  V_hat <- mean(drop(
+    gym_poly_policy_features(init_states, dgp$pi_func, specs = basis_specs) %*% w_hat
+  ))
 
   list(V_hat = V_hat, w = w_hat)
 }

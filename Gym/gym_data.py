@@ -13,10 +13,13 @@ except ImportError:
     import gym
 
 
-STATE_NOISE_SD = 0.1
+STATE_NOISE_SD = 0.05
 CARTPOLE_REWARD_NOISE_SD = 0.2
-CARTPOLE_ACTION_TRANSITION_COEF = 0
-CARTPOLE_ACTION_REWARD_COEF = 2
+CARTPOLE_ACTION_TRANSITION_COEF = 0.8
+CARTPOLE_ACTION_REWARD_COEF = 0.8
+
+
+
 CARTPOLE_REWARD_X_INDEX = 0
 CARTPOLE_REWARD_THETA_INDEX = 2
 
@@ -46,8 +49,8 @@ def target_policy(env_name: str, state: np.ndarray) -> float:
         return 0.5
     if env_name == "CartPole-v1":
         return float(
-            state[CARTPOLE_REWARD_X_INDEX] > 0
-            and state[CARTPOLE_REWARD_THETA_INDEX] > 0
+            state[CARTPOLE_REWARD_X_INDEX] > -0.5
+            and state[CARTPOLE_REWARD_THETA_INDEX] < 0.1
         )
     raise ValueError(f"Unsupported environment: {env_name}")
 

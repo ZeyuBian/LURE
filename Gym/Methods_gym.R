@@ -12,7 +12,7 @@ gym_clip <- function(x, lo = 1e-4, hi = 1 - 1e-4) {
   pmax(pmin(x, hi), lo)
 }
 
-gym_safe_ratio <- function(num, denom, lambda = 0.001) {
+gym_safe_ratio <- function(num, denom, lambda = 0.008) {
   num * denom / (denom^2 + lambda)
 }
 
@@ -42,7 +42,7 @@ gym_clip_abs_quantile <- function(x, q = 0.98, abs_cap = NULL) {
   pmin(pmax(x, -cap), cap)
 }
 
-gym_reward_quantile_bounds <- function(reward_vec, probs = c(0.02, 0.98)) {
+gym_reward_quantile_bounds <- function(reward_vec, probs = c(0.04, 0.96)) {
   bounds <- as.numeric(stats::quantile(
     reward_vec,
     probs = probs,
@@ -80,40 +80,30 @@ gym_state_formula <- function(response, d) {
   reformulate(gym_state_names(d), response = response)
 }
 
-gym_poly_features <- function(state_mat, include_intercept = TRUE) {
-  state_mat <- as.matrix(state_mat)
-  n <- nrow(state_mat)
-  d <- ncol(state_mat)
-
-  feat_list <- list()
-  if (include_intercept) {
-    feat_list[[length(feat_list) + 1L]] <- rep(1, n)
-  }
-  for (j in seq_len(d)) {
-    feat_list[[length(feat_list) + 1L]] <- state_mat[, j]
-  }
-  for (j in seq_len(d)) {
-    feat_list[[length(feat_list) + 1L]] <- state_mat[, j]^2
-  }
-  if (d >= 2L) {
-    for (j in 1:(d - 1L)) {
-      for (k in (j + 1L):d) {
-        feat_list[[length(feat_list) + 1L]] <- state_mat[, j] * state_mat[, k]
-      }
-    }
-  }
-
-  do.call(cbind, feat_list)
-}
+GYM_SPLINE_DF <- 6L
+GYM_SPLINE_DEGREE <- 3L
 
 gym_model_feature_names <- function(k) {
   paste0("f", seq_len(k))
 }
 
-gym_model_feature_df <- function(state_mat) {
-  feat_mat <- gym_poly_features(state_mat, include_intercept = FALSE)
-  out <- as.data.frame(feat_mat)
+gym_model_feature_df <- function(state_mat, specs = NULL,
+                                 spline_df = GYM_SPLINE_DF,
+                                 spline_degree = GYM_SPLINE_DEGREE,
+                                 return_specs = FALSE) {
+  feat_fit <- gym_poly_features(
+    state_mat,
+    include_intercept = FALSE,
+    specs = specs,
+    spline_df = spline_df,
+    spline_degree = spline_degree,
+    return_specs = TRUE
+  )
+  out <- as.data.frame(feat_fit$x_mat)
   names(out) <- gym_model_feature_names(ncol(out))
+  if (return_specs) {
+    return(list(feature_df = out, specs = feat_fit$specs))
+  }
   out
 }
 
@@ -122,8 +112,17 @@ gym_model_formula <- function(response, k) {
 }
 
 gym_weighted_ridge_fit <- function(state_mat, response_vec,
-                                   weights = NULL, ridge = 0.05) {
-  x_mat <- gym_poly_features(state_mat)
+                                   weights = NULL, ridge = 0.05,
+                                   spline_df = GYM_SPLINE_DF,
+                                   spline_degree = GYM_SPLINE_DEGREE) {
+  feat_fit <- gym_poly_features(
+    state_mat,
+    spline_df = spline_df,
+    spline_degree = spline_degree,
+    return_specs = TRUE
+  )
+  x_mat <- feat_fit$x_mat
+  basis_specs <- feat_fit$specs
   if (is.null(weights)) {
     weights <- rep(1, nrow(x_mat))
   }
@@ -144,17 +143,30 @@ gym_weighted_ridge_fit <- function(state_mat, response_vec,
                     crossprod(xw, yw))
 
   predict_fn <- function(state_new) {
-    x_new <- gym_poly_features(state_new)
+    x_new <- gym_poly_features(
+      state_new,
+      specs = basis_specs,
+      spline_df = spline_df,
+      spline_degree = spline_degree
+    )
     x_new <- sweep(x_new, 2L, center, FUN = "-")
     x_new <- sweep(x_new, 2L, scale_vec, FUN = "/")
     drop(x_new %*% beta_hat)
   }
 
-  list(beta = beta_hat, center = center, scale = scale_vec, predict = predict_fn)
+  list(
+    beta = beta_hat,
+    center = center,
+    scale = scale_vec,
+    specs = basis_specs,
+    predict = predict_fn
+  )
 }
 
 gym_spline_features <- function(state_mat, specs = NULL,
-                                df = 6L, degree = 3L) {
+                                df = GYM_SPLINE_DF,
+                                degree = GYM_SPLINE_DEGREE,
+                                include_intercept = TRUE) {
   if (!requireNamespace("splines", quietly = TRUE)) {
     stop("Package 'splines' is required for spline-based weighted FQE.")
   }
@@ -167,8 +179,13 @@ gym_spline_features <- function(state_mat, specs = NULL,
     specs <- vector("list", d)
   }
 
-  feat_list <- vector("list", d + 1L)
-  feat_list[[1L]] <- rep(1, n)
+  feat_list <- vector("list", d + as.integer(include_intercept))
+  idx <- 1L
+
+  if (include_intercept) {
+    feat_list[[idx]] <- rep(1, n)
+    idx <- idx + 1L
+  }
 
   for (j in seq_len(d)) {
     x <- as.numeric(state_mat[, j])
@@ -208,17 +225,41 @@ gym_spline_features <- function(state_mat, specs = NULL,
       )
     }
 
-    feat_list[[j + 1L]] <- basis_j
+    feat_list[[idx]] <- basis_j
+    idx <- idx + 1L
   }
 
   list(x_mat = do.call(cbind, feat_list), specs = specs)
 }
 
+gym_poly_features <- function(state_mat, include_intercept = TRUE,
+                              specs = NULL,
+                              spline_df = GYM_SPLINE_DF,
+                              spline_degree = GYM_SPLINE_DEGREE,
+                              return_specs = FALSE) {
+  feat_fit <- gym_spline_features(
+    state_mat,
+    specs = specs,
+    df = spline_df,
+    degree = spline_degree,
+    include_intercept = include_intercept
+  )
+  if (return_specs) {
+    return(feat_fit)
+  }
+  feat_fit$x_mat
+}
+
 gym_weighted_spline_ridge_fit <- function(state_mat, response_vec,
                                           weights = NULL, ridge = 0.05,
-                                          spline_df = 6L,
-                                          spline_degree = 3L) {
-  spline_fit <- gym_spline_features(state_mat, df = spline_df, degree = spline_degree)
+                                          spline_df = GYM_SPLINE_DF,
+                                          spline_degree = GYM_SPLINE_DEGREE) {
+  spline_fit <- gym_spline_features(
+    state_mat,
+    df = spline_df,
+    degree = spline_degree,
+    include_intercept = TRUE
+  )
   x_mat <- spline_fit$x_mat
 
   if (is.null(weights)) {
@@ -241,7 +282,13 @@ gym_weighted_spline_ridge_fit <- function(state_mat, response_vec,
                     crossprod(xw, yw))
 
   predict_fn <- function(state_new) {
-    x_new <- gym_spline_features(state_new, specs = spline_fit$specs)$x_mat
+    x_new <- gym_spline_features(
+      state_new,
+      specs = spline_fit$specs,
+      df = spline_df,
+      degree = spline_degree,
+      include_intercept = TRUE
+    )$x_mat
     x_new <- sweep(x_new, 2L, center, FUN = "-")
     x_new <- sweep(x_new, 2L, scale_vec, FUN = "/")
     drop(x_new %*% beta_hat)
@@ -249,6 +296,29 @@ gym_weighted_spline_ridge_fit <- function(state_mat, response_vec,
 
   list(beta = beta_hat, center = center, scale = scale_vec,
        specs = spline_fit$specs, predict = predict_fn)
+}
+
+gym_action_feature_matrix <- function(basis_mat, action_vec) {
+  action_vec <- as.integer(action_vec)
+  k <- ncol(basis_mat)
+  out <- matrix(0, nrow(basis_mat), 2L * k)
+  idx0 <- which(action_vec == 0L)
+  idx1 <- which(action_vec == 1L)
+  if (length(idx0) > 0L) {
+    out[idx0, seq_len(k)] <- basis_mat[idx0, , drop = FALSE]
+  }
+  if (length(idx1) > 0L) {
+    out[idx1, k + seq_len(k)] <- basis_mat[idx1, , drop = FALSE]
+  }
+  out
+}
+
+gym_policy_feature_matrix <- function(basis_mat, pi_s) {
+  k <- ncol(basis_mat)
+  out <- matrix(0, nrow(basis_mat), 2L * k)
+  out[, seq_len(k)] <- (1 - pi_s) * basis_mat
+  out[, k + seq_len(k)] <- pi_s * basis_mat
+  out
 }
 
 gym_flatten_states <- function(state_arr) {
@@ -467,14 +537,10 @@ target_gym_dataset_path <- function(dgp, N, TT, seed, gamma = NULL,
   candidate_paths[1]
 }
 
-mountain_car_target_policy <- function(state_mat) {
-  state_mat <- as.matrix(state_mat)
-  rep(0.5, nrow(state_mat))
-}
 
 cartpole_target_policy <- function(state_mat) {
   state_mat <- as.matrix(state_mat)
-  as.numeric(state_mat[, 1] > 0 & state_mat[, 3] > 0)
+  as.numeric(state_mat[, 1] > -2.4 & state_mat[, 3] < 0.2)
 }
 
 generate_gym_dgp <- function(env_name, bridge_index = NULL,
@@ -571,7 +637,7 @@ select_bridge_index_gym <- function(dat) {
     data = cbind(data.frame(at = At_vec), feature_df)
   )
   at_hat <- gym_clip(
-    predict(fit_at, newdata = feature_df, type = "response"), 0.02, 0.98)
+    predict(fit_at, newdata = feature_df, type = "response"), 0.04, 0.96)
   at_resid <- At_vec - at_hat
 
   bridge_scores <- numeric(ncol(Sp_mat))
@@ -592,31 +658,40 @@ select_bridge_index_gym <- function(dat) {
   )
 }
 
-gym_poly_action_features <- function(state_mat, action_vec) {
-  state_mat <- as.matrix(state_mat)
-  action_vec <- as.integer(action_vec)
-  pf <- gym_poly_features(state_mat)
-  k <- ncol(pf)
-  out <- matrix(0, nrow(state_mat), 2L * k)
-  idx0 <- which(action_vec == 0L)
-  idx1 <- which(action_vec == 1L)
-  if (length(idx0) > 0L) {
-    out[idx0, seq_len(k)] <- pf[idx0, , drop = FALSE]
-  }
-  if (length(idx1) > 0L) {
-    out[idx1, k + seq_len(k)] <- pf[idx1, , drop = FALSE]
+gym_poly_action_features <- function(state_mat, action_vec, specs = NULL,
+                                     spline_df = GYM_SPLINE_DF,
+                                     spline_degree = GYM_SPLINE_DEGREE,
+                                     return_specs = FALSE) {
+  feat_fit <- gym_poly_features(
+    state_mat,
+    specs = specs,
+    spline_df = spline_df,
+    spline_degree = spline_degree,
+    return_specs = TRUE
+  )
+  out <- gym_action_feature_matrix(feat_fit$x_mat, action_vec)
+  if (return_specs) {
+    return(list(x_mat = out, specs = feat_fit$specs))
   }
   out
 }
 
-gym_poly_policy_features <- function(state_mat, pi_func) {
+gym_poly_policy_features <- function(state_mat, pi_func, specs = NULL,
+                                     spline_df = GYM_SPLINE_DF,
+                                     spline_degree = GYM_SPLINE_DEGREE,
+                                     return_specs = FALSE) {
   state_mat <- as.matrix(state_mat)
-  pf <- gym_poly_features(state_mat)
-  pi_s <- pi_func(state_mat)
-  k <- ncol(pf)
-  out <- matrix(0, nrow(state_mat), 2L * k)
-  out[, seq_len(k)] <- (1 - pi_s) * pf
-  out[, k + seq_len(k)] <- pi_s * pf
+  feat_fit <- gym_poly_features(
+    state_mat,
+    specs = specs,
+    spline_df = spline_df,
+    spline_degree = spline_degree,
+    return_specs = TRUE
+  )
+  out <- gym_policy_feature_matrix(feat_fit$x_mat, pi_func(state_mat))
+  if (return_specs) {
+    return(list(x_mat = out, specs = feat_fit$specs))
+  }
   out
 }
 
@@ -634,7 +709,9 @@ gym_poly_policy_features <- function(state_mat, pi_func) {
   sigma_Sp <- matrix(1, nrow = 2L, ncol = d)
   loglik <- -Inf
 
-  df_s <- gym_model_feature_df(S_mat)
+  feat_fit <- gym_model_feature_df(S_mat, return_specs = TRUE)
+  df_s <- feat_fit$feature_df
+  basis_specs <- feat_fit$specs
   n_feat <- ncol(df_s)
   form_eta <- gym_model_formula("eta1", n_feat)
   form_at <- gym_model_formula("at", n_feat)
@@ -650,7 +727,7 @@ gym_poly_policy_features <- function(state_mat, pi_func) {
 
     fit_b <- lm(form_eta,
                 data = cbind(data.frame(eta1 = eta[, 2]), df_s))
-    b_hat <- gym_clip(fitted(fit_b), 0.02, 0.98)
+    b_hat <- gym_clip(fitted(fit_b), 0.04, 0.96)
 
     fit_mu0 <- glm(form_at, family = quasibinomial(),
                    weights = w0,
@@ -658,8 +735,8 @@ gym_poly_policy_features <- function(state_mat, pi_func) {
     fit_mu1 <- glm(form_at, family = quasibinomial(),
                    weights = w1,
                    data = cbind(data.frame(at = At_vec, w1 = w1), df_s))
-    mu_hat_0 <- gym_clip(fitted(fit_mu0), 0.02, 0.98)
-    mu_hat_1 <- gym_clip(fitted(fit_mu1), 0.02, 0.98)
+    mu_hat_0 <- gym_clip(fitted(fit_mu0), 0.04, 0.96)
+    mu_hat_1 <- gym_clip(fitted(fit_mu1), 0.04, 0.96)
 
     fit_R0 <- lm(form_r, weights = w0,
                  data = cbind(data.frame(r = R_vec, w0 = w0), df_s))
@@ -729,7 +806,8 @@ gym_poly_policy_features <- function(state_mat, pi_func) {
     fit_Sp1 = fit_Sp1,
     fit_mu0 = fit_mu0,
     fit_mu1 = fit_mu1,
-    fit_b = fit_b
+    fit_b = fit_b,
+    basis_specs = basis_specs
   )
 }
 
@@ -771,6 +849,9 @@ em_gym <- function(dat, gamma, max_iter = 90, tol = 1e-3,
   fit_b <- best$fit_b
   sigma_R <- best$sigma_R
   sigma_Sp <- best$sigma_Sp
+  basis_specs <- best$basis_specs
+  feature_df <- gym_model_feature_df(S_mat, specs = basis_specs)
+  n_feat <- ncol(feature_df)
 
   mean_at <- c(sum(eta[, 1] * At_vec) / sum(eta[, 1]),
                sum(eta[, 2] * At_vec) / sum(eta[, 2]))
@@ -787,13 +868,13 @@ em_gym <- function(dat, gamma, max_iter = 90, tol = 1e-3,
     fit_mu1 <- tmp
     sigma_R <- rev(sigma_R)
     sigma_Sp <- sigma_Sp[2:1, , drop = FALSE]
-    fit_b <- lm(gym_model_formula("eta1", ncol(gym_model_feature_df(S_mat))),
-                data = cbind(data.frame(eta1 = eta[, 2]), gym_model_feature_df(S_mat)))
+    fit_b <- lm(gym_model_formula("eta1", n_feat),
+                data = cbind(data.frame(eta1 = eta[, 2]), feature_df))
   }
 
   predict_theta_R <- function(state_new, a) {
     fit <- if (a == 0) fit_R0 else fit_R1
-    reward_hat <- predict(fit, newdata = gym_model_feature_df(state_new))
+    reward_hat <- predict(fit, newdata = gym_model_feature_df(state_new, specs = basis_specs))
     pmin(pmax(reward_hat, reward_clip_bounds["lo"]), reward_clip_bounds["hi"])
   }
 
@@ -801,7 +882,7 @@ em_gym <- function(dat, gamma, max_iter = 90, tol = 1e-3,
     fits <- if (a == 0) fit_Sp0 else fit_Sp1
     state_new <- as.matrix(state_new)
     out <- matrix(0, nrow(state_new), length(fits))
-    new_df <- gym_model_feature_df(state_new)
+    new_df <- gym_model_feature_df(state_new, specs = basis_specs)
     for (j in seq_along(fits)) {
       out[, j] <- predict(fits[[j]], newdata = new_df)
     }
@@ -810,12 +891,15 @@ em_gym <- function(dat, gamma, max_iter = 90, tol = 1e-3,
 
   predict_mu <- function(state_new, a) {
     fit <- if (a == 0) fit_mu0 else fit_mu1
-    gym_clip(predict(fit, newdata = gym_model_feature_df(state_new), type = "response"),
-             0.02, 0.98)
+    gym_clip(predict(fit,
+                     newdata = gym_model_feature_df(state_new, specs = basis_specs),
+                     type = "response"),
+             0.04, 0.96)
   }
 
   predict_b <- function(state_new) {
-    gym_clip(predict(fit_b, newdata = gym_model_feature_df(state_new)), 0.02, 0.98)
+    gym_clip(predict(fit_b, newdata = gym_model_feature_df(state_new, specs = basis_specs)),
+             0.04, 0.96)
   }
 
   list(
@@ -834,7 +918,8 @@ em_gym <- function(dat, gamma, max_iter = 90, tol = 1e-3,
     fit_Sp1 = fit_Sp1,
     fit_mu0 = fit_mu0,
     fit_mu1 = fit_mu1,
-    fit_b = fit_b
+    fit_b = fit_b,
+    basis_specs = basis_specs
   )
 }
 
@@ -844,9 +929,11 @@ solve_omega_gym <- function(em_out, dat, dgp, gamma, ridge = 0.05) {
   eta <- em_out$eta
   n <- nrow(S_mat)
 
-  phi0 <- gym_poly_action_features(S_mat, rep(0L, n))
-  phi1 <- gym_poly_action_features(S_mat, rep(1L, n))
-  phi_pi_sp <- gym_poly_policy_features(Sp_mat, dgp$pi_func)
+  feat_fit <- gym_poly_features(S_mat, return_specs = TRUE)
+  basis_specs <- feat_fit$specs
+  phi0 <- gym_action_feature_matrix(feat_fit$x_mat, rep(0L, n))
+  phi1 <- gym_action_feature_matrix(feat_fit$x_mat, rep(1L, n))
+  phi_pi_sp <- gym_poly_policy_features(Sp_mat, dgp$pi_func, specs = basis_specs)
 
   d_feat <- ncol(phi0)
   a_mat <- matrix(0, d_feat, d_feat)
@@ -858,7 +945,9 @@ solve_omega_gym <- function(em_out, dat, dgp, gamma, ridge = 0.05) {
   }
 
   init_states <- gym_draw_initial_states(dgp, 5000)
-  b_vec <- (1 - gamma) * colMeans(gym_poly_policy_features(init_states, dgp$pi_func))
+  b_vec <- (1 - gamma) * colMeans(
+    gym_poly_policy_features(init_states, dgp$pi_func, specs = basis_specs)
+  )
 
   beta_hat <- solve(a_mat + ridge * diag(d_feat), b_vec)
 
@@ -870,12 +959,13 @@ solve_omega_gym <- function(em_out, dat, dgp, gamma, ridge = 0.05) {
   }
 
   predict_omega <- function(state_new, action_vec) {
-    drop(gym_poly_action_features(state_new, action_vec) %*% beta_hat)
+    drop(gym_poly_action_features(state_new, action_vec, specs = basis_specs) %*% beta_hat)
   }
 
   list(
     beta = beta_hat,
     predict_omega = predict_omega,
+    basis_specs = basis_specs,
     omega_all = cbind(
       predict_omega(S_mat, rep(0L, n)),
       predict_omega(S_mat, rep(1L, n))
@@ -969,7 +1059,7 @@ weighted_fqe_gym <- function(em_out, dat, dgp, gamma, n_iter = 40, ridge = 0.05,
 compute_eta_outfold_gym <- function(em, S_te, At_te, R_te, Sp_te) {
   n <- nrow(S_te)
   d <- ncol(S_te)
-  b_hat <- gym_clip(em$predict_b(S_te), 0.02, 0.98)
+  b_hat <- gym_clip(em$predict_b(S_te), 0.04, 0.96)
   mu_hat_0 <- em$predict_mu(S_te, 0)
   mu_hat_1 <- em$predict_mu(S_te, 1)
   tR0 <- em$predict_theta_R(S_te, 0)

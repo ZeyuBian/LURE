@@ -6,8 +6,8 @@ gamma <- 0.7
 N <- 50
 TT <- 50
 mc_eval_N <- 10000
-mc_eval_T <- 200
-n_rep <- 20
+mc_eval_T <- 400
+n_rep <- 100
 tau_grid <- c(0.05, 0.10, 0.20, 0.30)
 
 
