@@ -361,6 +361,8 @@ gym_resolve_dir <- function() {
 }
 
 gym_python_bin <- function() {
+  configured <- getOption("lure.python", Sys.getenv("LURE_PYTHON", ""))
+  if (nzchar(configured)) return(configured)
   py <- Sys.which("python3")
   if (nzchar(py)) {
     return(py)
@@ -376,7 +378,7 @@ gym_parse_json_dataset <- function(payload) {
   state_dim <- length(payload$state_names)
   summary_only <- isTRUE(payload$summary_only)
   init_states <- matrix(as.numeric(unlist(payload$init_states, use.names = FALSE)),
-                        nrow = payload$N, ncol = state_dim)
+                        nrow = payload$N, ncol = state_dim, byrow = TRUE)
   discounted_returns <- as.numeric(unlist(payload$discounted_returns,
                                           use.names = FALSE))
 
@@ -387,6 +389,7 @@ gym_parse_json_dataset <- function(payload) {
       summary_only = TRUE,
       N = payload$N,
       T = payload$T,
+      target_policy = payload$target_policy,
       state_names = unlist(payload$state_names, use.names = FALSE),
       S = NULL,
       A = NULL,
@@ -404,17 +407,23 @@ gym_parse_json_dataset <- function(payload) {
     summary_only = FALSE,
     N = payload$N,
     T = payload$T,
+    target_policy = payload$target_policy,
     state_names = unlist(payload$state_names, use.names = FALSE),
-    S = array(as.numeric(unlist(payload$S, use.names = FALSE)),
-              dim = c(payload$N, payload$T, state_dim)),
+    ## Python JSON is trajectory/time/coordinate order; R fills column-first.
+    S = aperm(array(as.numeric(unlist(payload$S, use.names = FALSE)),
+              dim = c(state_dim, payload$T, payload$N)), c(3, 2, 1)),
     A = matrix(as.integer(unlist(payload$A, use.names = FALSE)),
-               nrow = payload$N, ncol = payload$T),
+               nrow = payload$N, ncol = payload$T, byrow = TRUE),
     Atilde = matrix(as.integer(unlist(payload$Atilde, use.names = FALSE)),
-                    nrow = payload$N, ncol = payload$T),
+                    nrow = payload$N, ncol = payload$T, byrow = TRUE),
     R = matrix(as.numeric(unlist(payload$R, use.names = FALSE)),
-               nrow = payload$N, ncol = payload$T),
-    Sp = array(as.numeric(unlist(payload$Sp, use.names = FALSE)),
-               dim = c(payload$N, payload$T, state_dim)),
+               nrow = payload$N, ncol = payload$T, byrow = TRUE),
+    Sp = aperm(array(as.numeric(unlist(payload$Sp, use.names = FALSE)),
+               dim = c(state_dim, payload$T, payload$N)), c(3, 2, 1)),
+    misclassification = payload$misclassification,
+    misclassification_prob = if (is.null(payload$misclassification_prob)) NULL else
+      matrix(as.numeric(unlist(payload$misclassification_prob, use.names = FALSE)),
+             nrow = payload$N, ncol = payload$T, byrow = TRUE),
     init_states = init_states,
     discounted_returns = discounted_returns
   )
@@ -422,7 +431,8 @@ gym_parse_json_dataset <- function(payload) {
 
 gym_run_generator <- function(env_name, dataset, N, TT, tau = 0,
                               gamma, seed = 1L,
-                              summary_only = FALSE) {
+                              summary_only = FALSE, misclassification = "constant",
+                              state_strength = .75, error_center = 0, error_scale = 1) {
   if (!requireNamespace("jsonlite", quietly = TRUE)) {
     stop("Package 'jsonlite' is required to read Gym datasets.")
   }
@@ -432,7 +442,7 @@ gym_run_generator <- function(env_name, dataset, N, TT, tau = 0,
   on.exit(unlink(output_path), add = TRUE)
 
   args <- c(
-    script_path,
+    shQuote(script_path),
     "--env", env_name,
     "--dataset", dataset,
     "--N", as.character(N),
@@ -440,8 +450,17 @@ gym_run_generator <- function(env_name, dataset, N, TT, tau = 0,
     "--tau", as.character(tau),
     "--gamma", as.character(gamma),
     "--seed", as.character(seed),
-    "--output", output_path
+    "--output", shQuote(output_path),
+    "--misclassification", misclassification,
+    "--state-strength", as.character(state_strength),
+    "--error-center", as.character(error_center),
+    "--error-scale", as.character(error_scale)
   )
+  if (identical(env_name, "CartPole-v1")) {
+    args <- c(args,
+      "--target-x-threshold", as.character(getOption("lure.cartpole.target_x", -2.4)),
+      "--target-theta-threshold", as.character(getOption("lure.cartpole.target_theta", .2)))
+  }
   if (summary_only) {
     args <- c(args, "--summary-only")
   }
@@ -490,7 +509,9 @@ resolve_offline_gym_data_dir <- function(base_dir = gym_resolve_dir()) {
 }
 
 offline_gym_dataset_path <- function(dgp, tau, rep,
-                                     data_dir = resolve_offline_gym_data_dir()) {
+                                     data_dir = resolve_offline_gym_data_dir(),
+                                     misclassification = "constant") {
+  misclassification <- match.arg(misclassification, c("constant", "state_dependent"))
   base_dir <- gym_resolve_dir()
   candidate_dirs <- unique(c(
     data_dir,
@@ -498,7 +519,7 @@ offline_gym_dataset_path <- function(dgp, tau, rep,
     base_dir
   ))
   rel_path <- file.path(
-    dgp$env_name,
+    if (misclassification == "state_dependent") file.path(dgp$env_name, "state_dependent") else dgp$env_name,
     paste0("tau_", format_gym_tau(tau)),
     sprintf("rep_%03d.json", rep)
   )
@@ -524,6 +545,11 @@ target_gym_dataset_path <- function(dgp, N, TT, seed, gamma = NULL,
     sprintf("N_%d_T_%d_gamma_%s_seed_%d.json",
             N, TT, format_gym_gamma(gamma), seed)
   }
+  if (identical(dgp$env_name, "CartPole-v1")) {
+    ## Do not reuse MC returns generated for a different target policy.
+    file_name <- sub("[.]json$", sprintf("_policy_x_%g_theta_%g.json",
+      getOption("lure.cartpole.target_x", -2.4), getOption("lure.cartpole.target_theta", .2)), file_name)
+  }
   rel_path <- file.path(
     dgp$env_name,
     "target_mc",
@@ -540,7 +566,8 @@ target_gym_dataset_path <- function(dgp, N, TT, seed, gamma = NULL,
 
 cartpole_target_policy <- function(state_mat) {
   state_mat <- as.matrix(state_mat)
-  as.numeric(state_mat[, 1] > -2.4 & state_mat[, 3] < 0.2)
+  as.numeric(state_mat[, 1] > getOption("lure.cartpole.target_x", -2.4) &
+               state_mat[, 3] < getOption("lure.cartpole.target_theta", .2))
 }
 
 generate_gym_dgp <- function(env_name, bridge_index = NULL,
@@ -577,7 +604,9 @@ generate_gym_dgp <- function(env_name, bridge_index = NULL,
   )
 }
 
-generate_offline_data_gym <- function(dgp, N, TT, tau, gamma, seed = 1L) {
+generate_offline_data_gym <- function(dgp, N, TT, tau, gamma, seed = 1L,
+                                      misclassification = "constant", state_strength = .75,
+                                      error_center = 0, error_scale = 1) {
   gym_run_generator(
     env_name = dgp$env_name,
     dataset = "offline",
@@ -585,7 +614,8 @@ generate_offline_data_gym <- function(dgp, N, TT, tau, gamma, seed = 1L) {
     TT = TT,
     tau = tau,
     gamma = gamma,
-    seed = seed
+    seed = seed, misclassification = misclassification, state_strength = state_strength,
+    error_center = error_center, error_scale = error_scale
   )
 }
 
@@ -1295,8 +1325,12 @@ evaluate_gym_estimators <- function(dat, dgp, gamma, seed = NULL) {
   )
 }
 
-one_rep_gym <- function(dgp, N, TT, tau, gamma, seed = 1L) {
+one_rep_gym <- function(dgp, N, TT, tau, gamma, seed = 1L,
+                        misclassification = "constant", state_strength = .75,
+                        error_center = 0, error_scale = 1) {
   dat <- generate_offline_data_gym(dgp, N = N, TT = TT, tau = tau,
-                                   gamma = gamma, seed = seed)
+                                   gamma = gamma, seed = seed, misclassification = misclassification,
+                                   state_strength = state_strength, error_center = error_center,
+                                   error_scale = error_scale)
   evaluate_gym_estimators(dat, dgp, gamma, seed = seed)
 }

@@ -1,3 +1,11 @@
+.lure_error_candidates <- c(
+  tryCatch(file.path(dirname(sys.frame(1)$ofile), "..", "state_dependent_error.R"), error=function(e) character()),
+  "../state_dependent_error.R", "state_dependent_error.R", "Code/state_dependent_error.R")
+.lure_error_path <- .lure_error_candidates[file.exists(.lure_error_candidates)][1]
+if (is.na(.lure_error_path)) stop("Cannot locate Code/state_dependent_error.R.")
+source(.lure_error_path, local = TRUE)
+rm(.lure_error_candidates, .lure_error_path)
+
 ################################################################################
 ## Competing OPE Methods (naive — treat surrogate as true action)
 ##
@@ -89,14 +97,14 @@
 MIS <- function(S, A, R, H, phi = NULL, pi1 = 0.8, gamma, ridge = 0.005) {
   S <- .coerce_tabular_state(S)
   N <- length(A) / H
-  
+
   if (length(S) != length(A) || length(R) != length(A)) {
     stop("S, A, and R must have the same length.")
   }
   if (N != floor(N)) {
     stop("length(A) must be divisible by H.")
   }
-  
+
   state_levels <- sort(unique(S))
   state_labels <- as.character(state_levels)
   S_chr <- as.character(S)
@@ -608,9 +616,11 @@ compute_true_value <- function(dgp, gamma) {
 # ==============================================================================
 # 3. Generate trajectory data
 # ==============================================================================
-generate_data <- function(dgp, N, TT, epsilon) {
+generate_data <- function(dgp, N, TT, epsilon, misclassification = "constant", state_strength = .75) {
+  amplitude <- lure_error_amplitude(epsilon, misclassification, state_strength)
   nS <- dgp$nS
   S <- A <- Atilde <- R <- Sprime <- matrix(NA, N, TT)
+  probabilities <- scores <- matrix(NA_real_, N, TT)
   
   for (i in 1:N) {
     s <- sample(1:nS, 1, prob = dgp$p_e)
@@ -621,8 +631,11 @@ generate_data <- function(dgp, N, TT, epsilon) {
       a <- rbinom(1, 1, dgp$b_policy[s])
       A[i, t] <- a
       
-      ## Surrogate action (constant misclassification rate epsilon)
-      Atilde[i, t] <- ifelse(runif(1) < epsilon, 1 - a, a)
+      ## Same RNG draw as the original code; only the recording probability changes.
+      score <- if (nS > 1) 2 * (s - 1) / (nS - 1) - 1 else 0
+      p_flip <- epsilon + amplitude * score
+      scores[i, t] <- score; probabilities[i, t] <- p_flip
+      Atilde[i, t] <- ifelse(runif(1) < p_flip, 1 - a, a)
       
       ## Reward
       R[i, t] <- dgp$theta_R[s, a + 1] + rnorm(1, 0, dgp$sigma_R)
@@ -632,47 +645,44 @@ generate_data <- function(dgp, N, TT, epsilon) {
       Sprime[i, t] <- s
     }
   }
-  list(S = S, A = A, Atilde = Atilde, R = R, Sprime = Sprime)
+  list(S = S, A = A, Atilde = Atilde, R = R, Sprime = Sprime,
+    misclassification_prob = probabilities, misclassification_score = scores,
+    misclassification = lure_error_metadata(probabilities, scores, A, Atilde,
+                                             epsilon, misclassification, state_strength))
 }
 
 # ==============================================================================
 # 4. EM-style nuisance estimation (tabular)
 # ==============================================================================
+align_tabular_labels_by_state <- function(eta, S, b_hat, mu_hat,
+                                           theta_R_hat, sigma_R_hat, P_hat) {
+  nS <- nrow(mu_hat)
+  label_swapped <- logical(nS)
+  for (s in seq_len(nS)) {
+    if (mu_hat[s, 1] > mu_hat[s, 2]) {
+      idx <- which(S == s)
+      eta[idx, ] <- eta[idx, 2:1, drop = FALSE]
+      b_hat[s] <- 1 - b_hat[s]
+      mu_hat[s, ] <- mu_hat[s, 2:1]
+      theta_R_hat[s, ] <- theta_R_hat[s, 2:1]
+      sigma_R_hat[s, ] <- sigma_R_hat[s, 2:1]
+      transition_slice <- P_hat[s, , , drop = FALSE]
+      P_hat[s, , 1] <- transition_slice[1, , 2]
+      P_hat[s, , 2] <- transition_slice[1, , 1]
+      label_swapped[s] <- TRUE
+    }
+  }
+  list(eta = eta, b_hat = b_hat, mu_hat = mu_hat,
+       theta_R_hat = theta_R_hat, sigma_R_hat = sigma_R_hat,
+       P_hat = P_hat, label_swapped = label_swapped)
+}
+
 em_tabular <- function(dat, nS, gamma, max_iter = 100, tol = 1e-4) {
   S  <- as.vector(dat$S)
   At <- as.vector(dat$Atilde)
   R  <- as.vector(dat$R)
   Sp <- as.vector(dat$Sprime)
   n  <- length(S)
-  
-  relabel_by_surrogate <- function(eta, b_hat, mu_hat, theta_R_hat,
-                                   sigma_R_hat, P_hat) {
-    class_prob_tilde1 <- numeric(2)
-    for (k in 1:2) {
-      sw <- sum(eta[, k])
-      if (sw > 1e-10) class_prob_tilde1[k] <- sum(eta[, k] * At) / sw
-    }
-    
-    if (class_prob_tilde1[2] >= class_prob_tilde1[1]) {
-      return(list(
-        eta = eta,
-        b_hat = b_hat,
-        mu_hat = mu_hat,
-        theta_R_hat = theta_R_hat,
-        sigma_R_hat = sigma_R_hat,
-        P_hat = P_hat
-      ))
-    }
-    
-    list(
-      eta = eta[, 2:1, drop = FALSE],
-      b_hat = 1 - b_hat,
-      mu_hat = mu_hat[, 2:1, drop = FALSE],
-      theta_R_hat = theta_R_hat[, 2:1, drop = FALSE],
-      sigma_R_hat = sigma_R_hat[, 2:1, drop = FALSE],
-      P_hat = P_hat[, , 2:1, drop = FALSE]
-    )
-  }
   
   ## Initialise responsibilities from the surrogate
   eta <- matrix(0.5, n, 2)
@@ -735,36 +745,26 @@ em_tabular <- function(dat, nS, gamma, max_iter = 100, tol = 1e-4) {
     if (max(abs(eta - eta_old)) < tol) break
   }
   
-  relabeled <- relabel_by_surrogate(
-    eta = eta,
-    b_hat = b_hat,
-    mu_hat = mu_hat,
-    theta_R_hat = theta_R_hat,
-    sigma_R_hat = sigma_R_hat,
-    P_hat = P_hat
+  ## Each state has its own unconstrained two-component mixture, so it also
+  ## has its own label symmetry.  Enforce the paper's surrogate ordering in
+  ## every state and permute all action-indexed quantities coherently.
+  aligned <- align_tabular_labels_by_state(
+    eta, S, b_hat, mu_hat, theta_R_hat, sigma_R_hat, P_hat
   )
-  eta <- relabeled$eta
-  b_hat <- relabeled$b_hat
-  mu_hat <- relabeled$mu_hat
-  theta_R_hat <- relabeled$theta_R_hat
-  sigma_R_hat <- relabeled$sigma_R_hat
-  P_hat <- relabeled$P_hat
+  eta <- aligned$eta; b_hat <- aligned$b_hat; mu_hat <- aligned$mu_hat
+  theta_R_hat <- aligned$theta_R_hat
+  sigma_R_hat <- aligned$sigma_R_hat; P_hat <- aligned$P_hat
+  label_swapped <- aligned$label_swapped
   
-  ## theta_{S'}(s,a) = E[S' | S=s, A=a]   (state index treated as numeric)
-  theta_Sp_hat <- matrix(0, nS, 2)
-  for (s in 1:nS) {
-    idx <- which(S == s)
-    if (length(idx) == 0) next
-    for (a in 0:1) {
-      w <- eta[idx, a + 1]; sw <- sum(w)
-      if (sw > 1e-10) theta_Sp_hat[s, a + 1] <- sum(w * Sp[idx]) / sw
-    }
-  }
-  
+  ## Keep the proxy mean coherent with the returned transition model, even
+  ## when the EM loop reaches its iteration cap before a fixed point.
+  theta_Sp_hat <- apply(P_hat, c(1, 3), function(p) sum(seq_len(nS) * p))
+
   list(eta = eta, b_hat = b_hat, mu_hat = mu_hat,
        theta_R_hat = theta_R_hat, sigma_R_hat = sigma_R_hat,
        P_hat = P_hat, theta_Sp_hat = theta_Sp_hat,
-       theta_At_hat = mu_hat)
+       theta_At_hat = mu_hat, label_swapped = label_swapped,
+       n_iter = iter, converged = max(abs(eta - eta_old)) < tol)
 }
 
 # ==============================================================================
@@ -842,70 +842,79 @@ solve_Q_tabular <- function(em_out, dgp, gamma) {
 }
 
 # ==============================================================================
-# 7. Multiply robust (MR) estimator (no cross-fitting)
+# 7. Multiply robust (MR) estimator with K=2 trajectory cross-fitting
 # ==============================================================================
-mr_estimator <- function(dat, dgp, gamma, K = NULL) {
+subset_dat_tabular <- function(dat, row_idx) {
+  keep <- c("S", "A", "Atilde", "R", "Sprime", "misclassification_prob",
+            "misclassification_score")
+  out <- lapply(dat[intersect(keep, names(dat))], function(x) {
+    if (is.matrix(x)) x[row_idx, , drop = FALSE] else x
+  })
+  out
+}
+
+mr_estimator <- function(dat, dgp, gamma, K = 2L) {
   N  <- nrow(dat$S);  TT <- ncol(dat$S)
   nS <- dgp$nS;  pi <- dgp$pi_policy
-  
-  ## EM on all data
-  em <- em_tabular(dat, nS, gamma)
-  
-  ## Nuisance functions
-  omega <- solve_omega_tabular(em, dat, dgp, gamma)
-  Q     <- solve_Q_tabular(em, dgp, gamma)
-  V     <- (1 - pi) * Q[, 1] + pi * Q[, 2]
-  
-  ## M V^pi(s,a) = Σ_{s'} P̂(s'|s,a) V(s')
-  MV <- matrix(0, nS, 2)
-  for (a in 0:1) MV[, a + 1] <- em$P_hat[, , a + 1] %*% V
-  
-  tR  <- em$theta_R_hat
-  tAt <- em$theta_At_hat
-  tSp <- em$theta_Sp_hat
-  
-  direct <- sum(dgp$p_e * V)
-  
-  ## Evaluate IF and IS on all data (single loop)
-  phi_all <- numeric(N * TT)
-  for (i in 1:N) for (t in 1:TT) {
-    s  <- dat$S[i, t]
-    at <- dat$Atilde[i, t]
-    r  <- dat$R[i, t]
-    sp <- dat$Sprime[i, t]
-    
-    T1 <- 0; T2 <- 0
-    for (a in 0:1) {
-      oa <- 1 - a
-      
-      d_At <- tAt[s, a + 1] - tAt[s, oa + 1]
-      d_At <- ifelse(abs(d_At) < 1e-10, sign(d_At + 1e-20) * 1e-10, d_At)
-      br_At <- (at - tAt[s, oa + 1]) / d_At
-      
-      d_R  <- tR[s, a + 1] - tR[s, oa + 1]
-      d_R  <- ifelse(abs(d_R) < 1e-10, sign(d_R + 1e-20) * 1e-10, d_R)
-      br_R <- (r - tR[s, oa + 1]) / d_R
-      
-      d_Sp <- tSp[s, a + 1] - tSp[s, oa + 1]
-      d_Sp <- ifelse(abs(d_Sp) < 1e-10, sign(d_Sp + 1e-20) * 1e-10, d_Sp)
-      br_Sp <- (sp - tSp[s, oa + 1]) / d_Sp
-      
-      ga  <- br_At * br_R
-      gap <- br_At * br_Sp
-      
-      T1 <- T1 + gap * omega[s, a + 1] * (r  - tR[s, a + 1])
-      T2 <- T2 + ga  * omega[s, a + 1] * (V[sp] - MV[s, a + 1])
-    }
-    idx <- (i - 1) * TT + t
-    phi_all[idx] <- T1 / (1 - gamma) + T2 * gamma / (1 - gamma)
+  K <- as.integer(K)
+  if (length(K) != 1L || is.na(K) || K != 2L) {
+    stop("The LURE implementation uses K = 2 trajectory folds.")
   }
-  
-  V_hat <- direct + mean(phi_all)
-  se    <- sqrt(var(phi_all) / (N * TT))
+  if (N < K) stop("At least two trajectories are required for K = 2 cross-fitting.")
+  fold_ids <- sample(rep(seq_len(K), length.out = N))
+  contribution_list <- vector("list", K)
+  fold_converged <- logical(K)
+  fold_iterations <- integer(K)
+
+  for (k in seq_len(K)) {
+    train_idx <- which(fold_ids != k)
+    test_idx <- which(fold_ids == k)
+    train <- subset_dat_tabular(dat, train_idx)
+    em <- em_tabular(train, nS, gamma)
+    omega <- solve_omega_tabular(em, train, dgp, gamma)
+    Q <- solve_Q_tabular(em, dgp, gamma)
+    V <- (1 - pi) * Q[, 1] + pi * Q[, 2]
+    MV <- cbind(em$P_hat[, , 1] %*% V, em$P_hat[, , 2] %*% V)
+    tR <- em$theta_R_hat; tAt <- em$theta_At_hat; tSp <- em$theta_Sp_hat
+    direct <- sum(dgp$p_e * V)
+    phi <- numeric(length(test_idx) * TT)
+    jj <- 0L
+    for (i in test_idx) for (t in seq_len(TT)) {
+      jj <- jj + 1L
+      s <- dat$S[i, t]; at <- dat$Atilde[i, t]
+      r <- dat$R[i, t]; sp <- dat$Sprime[i, t]
+      T1 <- T2 <- 0
+      for (a in 0:1) {
+        oa <- 1 - a
+        d_At <- tAt[s, a + 1] - tAt[s, oa + 1]
+        d_At <- ifelse(abs(d_At) < 1e-10, sign(d_At + 1e-20) * 1e-10, d_At)
+        d_R <- tR[s, a + 1] - tR[s, oa + 1]
+        d_R <- ifelse(abs(d_R) < 1e-10, sign(d_R + 1e-20) * 1e-10, d_R)
+        d_Sp <- tSp[s, a + 1] - tSp[s, oa + 1]
+        d_Sp <- ifelse(abs(d_Sp) < 1e-10, sign(d_Sp + 1e-20) * 1e-10, d_Sp)
+        br_At <- (at - tAt[s, oa + 1]) / d_At
+        br_R <- (r - tR[s, oa + 1]) / d_R
+        br_Sp <- (sp - tSp[s, oa + 1]) / d_Sp
+        T1 <- T1 + br_At * br_Sp * omega[s, a + 1] * (r - tR[s, a + 1])
+        T2 <- T2 + br_At * br_R * omega[s, a + 1] * (V[sp] - MV[s, a + 1])
+      }
+      phi[jj] <- T1 / (1 - gamma) + gamma * T2 / (1 - gamma)
+    }
+    contribution_list[[k]] <- direct + phi
+    fold_converged[k] <- isTRUE(em$converged)
+    fold_iterations[k] <- em$n_iter
+  }
+
+  contribution_all <- unlist(contribution_list, use.names = FALSE)
+  V_hat <- mean(contribution_all)
+  centered_if <- contribution_all - V_hat
+  se <- sqrt(mean(centered_if^2) / (N * TT))
 
   list(V_hat = V_hat, se = se,
        ci_lo = V_hat - 1.96 * se,
-       ci_hi = V_hat + 1.96 * se)
+       ci_hi = V_hat + 1.96 * se,
+       fold_ids = fold_ids, fold_converged = fold_converged,
+       fold_iterations = fold_iterations)
 }
 
 # ==============================================================================
@@ -923,11 +932,11 @@ stack_for_methods <- function(dat) {
   list(S = data.frame(S = S_vec), A = A_vec, R = R_vec, H = TT)
 }
 
-one_rep <- function(dgp, N, TT, epsilon, gamma) {
+one_rep <- function(dgp, N, TT, epsilon, gamma, misclassification = "constant", state_strength = .75) {
   nS <- dgp$nS
   pi <- dgp$pi_policy
   
-  dat <- generate_data(dgp, N, TT, epsilon)
+  dat <- generate_data(dgp, N, TT, epsilon, misclassification, state_strength)
   
   ## ---- tabular basis (kept for compatibility with FQE / DRL interface) ----
   phi_tab <- function(S_df, A) {
@@ -978,11 +987,11 @@ one_rep <- function(dgp, N, TT, epsilon, gamma) {
   
   ## --- our MR estimator ---
   mr <- tryCatch(
-    mr_estimator(dat, dgp, gamma, K = 5),
+    mr_estimator(dat, dgp, gamma, K = 2L),
     error = function(e) list(V_hat = NA, ci_lo = NA, ci_hi = NA)
   )
   
-  c(
+  out <- c(
     FQE      = V_fqe,
     SIS      = V_sis,
     MIS      = V_mis,
@@ -992,5 +1001,6 @@ one_rep <- function(dgp, N, TT, epsilon, gamma) {
     MR_ci_lo = mr$ci_lo,
     MR_ci_hi = mr$ci_hi
   )
+  attr(out, "misclassification") <- dat$misclassification
+  out
 }
-

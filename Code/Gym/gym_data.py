@@ -44,13 +44,13 @@ def binary_to_env_action(env_name: str, action_bin: int) -> int:
     raise ValueError(f"Unsupported environment: {env_name}")
 
 
-def target_policy(env_name: str, state: np.ndarray) -> float:
+def target_policy(env_name: str, state: np.ndarray, x_threshold=-0.5, theta_threshold=0.1) -> float:
     if env_name == "MountainCar-v0":
         return 0.5
     if env_name == "CartPole-v1":
         return float(
-            state[CARTPOLE_REWARD_X_INDEX] > -0.5
-            and state[CARTPOLE_REWARD_THETA_INDEX] < 0.1
+            state[CARTPOLE_REWARD_X_INDEX] > x_threshold
+            and state[CARTPOLE_REWARD_THETA_INDEX] < theta_threshold
         )
     raise ValueError(f"Unsupported environment: {env_name}")
 
@@ -152,10 +152,35 @@ def step_cartpole(env, action: int, rng: np.random.Generator, noisy_state: Optio
     return next_state, float(reward), terminated, {}
 
 
-def choose_action(dataset: str, env_name: str, state: np.ndarray, rng: np.random.Generator) -> int:
+def choose_action(dataset: str, env_name: str, state: np.ndarray, rng: np.random.Generator,
+                  x_threshold=-0.5, theta_threshold=0.1) -> int:
     if dataset == "offline":
         return int(rng.random() < behavior_prob(env_name, state))
-    return int(rng.random() < target_policy(env_name, state))
+    return int(rng.random() < target_policy(env_name, state, x_threshold, theta_threshold))
+
+
+def error_amplitude(tau, misclassification="constant", state_strength=0.75,
+                    error_center=0.0, error_scale=1.0):
+    if misclassification not in ("constant", "state_dependent"):
+        raise ValueError("Unknown misclassification mode.")
+    if not np.isfinite(tau) or not 0 <= tau <= 1:
+        raise ValueError("tau must be in [0, 1].")
+    if not np.isfinite(state_strength) or not 0 <= state_strength < 1:
+        raise ValueError("state_strength must be in [0, 1).")
+    if not np.isfinite(error_center) or not np.isfinite(error_scale) or error_scale <= 0:
+        raise ValueError("Use a finite error center and positive finite scale.")
+    if misclassification == "constant":
+        return 0.0
+    if tau >= 0.5:
+        raise ValueError("State-dependent errors require tau < 0.5.")
+    return state_strength * min(tau, 0.5 - tau)
+
+
+def error_probabilities(states, tau, misclassification="constant", state_strength=0.75,
+                        error_center=0.0, error_scale=1.0):
+    states = np.asarray(states, dtype=float)
+    amplitude = error_amplitude(tau, misclassification, state_strength, error_center, error_scale)
+    return tau + amplitude * np.tanh((states[..., 0] - error_center) / error_scale)
 
 
 def corrupt_label(action_bin: int, dataset: str, tau: float, rng: np.random.Generator) -> int:
@@ -166,14 +191,25 @@ def corrupt_label(action_bin: int, dataset: str, tau: float, rng: np.random.Gene
     return int(action_bin)
 
 
-def corrupt_action_labels(action_mat: np.ndarray, tau: float, seed: int) -> np.ndarray:
+def corrupt_action_labels(action_mat: np.ndarray, tau: float, seed: int,
+                          states=None, misclassification="constant", state_strength=0.75,
+                          error_center=0.0, error_scale=1.0) -> np.ndarray:
     action_mat = np.asarray(action_mat, dtype=int)
+    error_amplitude(tau, misclassification, state_strength, error_center, error_scale)
+    if misclassification == "state_dependent" and states is None:
+        raise ValueError("State-dependent recording requires current states.")
+    p = tau if states is None else error_probabilities(
+        states, tau, misclassification, state_strength, error_center, error_scale)
+    if np.ndim(p) and np.shape(p) != action_mat.shape:
+        raise ValueError("States and actions have incompatible shapes.")
     rng = np.random.default_rng(seed)
-    flip_mask = rng.random(size=action_mat.shape) < tau
+    flip_mask = rng.random(size=action_mat.shape) < p
     return np.where(flip_mask, 1 - action_mat, action_mat).astype(int)
 
 
-def derive_offline_dataset_from_oracle(oracle_payload: dict, tau: float, seed: int) -> dict:
+def derive_offline_dataset_from_oracle(oracle_payload: dict, tau: float, seed: int,
+                                      misclassification="constant", state_strength=0.75,
+                                      error_center=0.0, error_scale=1.0) -> dict:
     if bool(oracle_payload.get("summary_only", False)):
         raise ValueError("Oracle offline payload must include full trajectories.")
     if "A" not in oracle_payload:
@@ -181,7 +217,17 @@ def derive_offline_dataset_from_oracle(oracle_payload: dict, tau: float, seed: i
 
     payload = dict(oracle_payload)
     payload["dataset"] = "offline"
-    payload["Atilde"] = corrupt_action_labels(payload["A"], tau=tau, seed=seed).tolist()
+    if misclassification == "state_dependent" and payload["env_name"] != "CartPole-v1":
+        raise ValueError("The state-dependent extension is CartPole-only.")
+    p = error_probabilities(payload["S"], tau, misclassification, state_strength, error_center, error_scale)
+    payload["Atilde"] = corrupt_action_labels(payload["A"], tau=tau, seed=seed,
+        states=payload["S"], misclassification=misclassification, state_strength=state_strength,
+        error_center=error_center, error_scale=error_scale).tolist()
+    payload["misclassification_prob"] = p.tolist()
+    payload["misclassification"] = dict(mode=misclassification, tau=tau,
+        state_strength=state_strength, error_center=error_center, error_scale=error_scale,
+        expected_rate=float(np.mean(p)), label_seed=seed,
+        realized_rate=float(np.mean(np.asarray(payload["A"]) != payload["Atilde"])))
     return payload
 
 
@@ -202,7 +248,13 @@ def resolve_multi_tau_output_path(output_arg: str, tau: float, seed: int) -> Pat
 def rollout_dataset(env_name: str, dataset: str, n_traj: int, horizon: int,
                     tau: float, gamma: float, seed: int,
                     summary_only: bool = False,
-                    apply_label_noise: bool = True):
+                    apply_label_noise: bool = True,
+                    misclassification="constant", state_strength=0.75,
+                    error_center=0.0, error_scale=1.0,
+                    target_x_threshold=-0.5, target_theta_threshold=0.1):
+    amplitude = error_amplitude(tau, misclassification, state_strength, error_center, error_scale)
+    if misclassification == "state_dependent" and env_name != "CartPole-v1":
+        raise ValueError("The state-dependent extension is CartPole-only.")
     rng = np.random.default_rng(seed)
     env = gym.make(env_name)
 
@@ -219,6 +271,7 @@ def rollout_dataset(env_name: str, dataset: str, n_traj: int, horizon: int,
         A = np.zeros((n_traj, horizon), dtype=int)
         Atilde = np.zeros((n_traj, horizon), dtype=int)
         R = np.zeros((n_traj, horizon), dtype=float)
+    probabilities = None if summary_only else np.zeros((n_traj, horizon), dtype=float)
     init_states = np.zeros((n_traj, obs_dim), dtype=float)
     discounted_returns = np.zeros(n_traj, dtype=float)
 
@@ -232,14 +285,17 @@ def rollout_dataset(env_name: str, dataset: str, n_traj: int, horizon: int,
             if not summary_only:
                 S[i, t] = state_t
 
-            action_bin = choose_action(dataset, env_name, state_t, rng)
+            action_bin = choose_action(dataset, env_name, state_t, rng,
+                                       target_x_threshold, target_theta_threshold)
+            p_flip = tau + amplitude * np.tanh((state_t[0] - error_center) / error_scale)
             if dataset == "offline" and not apply_label_noise:
                 observed_action = int(action_bin)
             else:
-                observed_action = corrupt_label(action_bin, dataset, tau, rng)
+                observed_action = corrupt_label(action_bin, dataset, p_flip, rng)
             if not summary_only:
                 A[i, t] = action_bin
                 Atilde[i, t] = observed_action
+                probabilities[i, t] = p_flip if dataset == "offline" and apply_label_noise else 0.0
 
             next_state, reward, _, _ = step_env(
                 env,
@@ -262,6 +318,9 @@ def rollout_dataset(env_name: str, dataset: str, n_traj: int, horizon: int,
         "summary_only": bool(summary_only),
         "N": int(n_traj),
         "T": int(horizon),
+        "seed": int(seed),
+        "gamma": float(gamma),
+        "target_policy": dict(x_threshold=target_x_threshold, theta_threshold=target_theta_threshold),
         "state_names": [f"x{j + 1}" for j in range(obs_dim)],
         "init_states": init_states.tolist(),
         "discounted_returns": discounted_returns.tolist(),
@@ -273,7 +332,11 @@ def rollout_dataset(env_name: str, dataset: str, n_traj: int, horizon: int,
             "Atilde": Atilde.tolist(),
             "R": R.tolist(),
             "Sp": Sp.tolist(),
+            "misclassification_prob": probabilities.tolist(),
         })
+        payload["misclassification"] = dict(mode=misclassification, tau=tau,
+            state_strength=state_strength, error_center=error_center, error_scale=error_scale,
+            expected_rate=float(np.mean(probabilities)), realized_rate=float(np.mean(A != Atilde)))
     return payload
 
 
@@ -289,6 +352,12 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--output", required=True)
     parser.add_argument("--summary-only", action="store_true")
+    parser.add_argument("--misclassification", choices=["constant", "state_dependent"], default="constant")
+    parser.add_argument("--state-strength", type=float, default=0.75)
+    parser.add_argument("--error-center", type=float, default=0.0)
+    parser.add_argument("--error-scale", type=float, default=1.0)
+    parser.add_argument("--target-x-threshold", type=float, default=-0.5)
+    parser.add_argument("--target-theta-threshold", type=float, default=0.1)
     args = parser.parse_args()
 
     if args.summary_only and args.dataset != "target":
@@ -309,6 +378,8 @@ def main() -> None:
             seed=args.seed,
             summary_only=False,
             apply_label_noise=False,
+            target_x_threshold=args.target_x_threshold,
+            target_theta_threshold=args.target_theta_threshold,
         )
 
         for tau in taus:
@@ -316,6 +387,8 @@ def main() -> None:
                 oracle_payload,
                 tau=tau,
                 seed=args.seed,
+                misclassification=args.misclassification, state_strength=args.state_strength,
+                error_center=args.error_center, error_scale=args.error_scale,
             )
             output_path = resolve_multi_tau_output_path(args.output, tau=tau, seed=args.seed)
             write_payload(payload, output_path)
@@ -330,6 +403,10 @@ def main() -> None:
         gamma=args.gamma,
         seed=args.seed,
         summary_only=args.summary_only,
+        misclassification=args.misclassification, state_strength=args.state_strength,
+        error_center=args.error_center, error_scale=args.error_scale,
+        target_x_threshold=args.target_x_threshold,
+        target_theta_threshold=args.target_theta_threshold,
     )
 
     output_path = Path(args.output)

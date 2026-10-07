@@ -1,3 +1,11 @@
+.lure_error_candidates <- c(
+  tryCatch(file.path(dirname(sys.frame(1)$ofile), "..", "state_dependent_error.R"), error=function(e) character()),
+  "../state_dependent_error.R", "state_dependent_error.R", "Code/state_dependent_error.R")
+.lure_error_path <- .lure_error_candidates[file.exists(.lure_error_candidates)][1]
+if (is.na(.lure_error_path)) stop("Cannot locate Code/state_dependent_error.R.")
+source(.lure_error_path, local = TRUE)
+rm(.lure_error_candidates, .lure_error_path)
+
 ################################################################################
 ## Continuous-State MDP — "Learning from the Unseen"
 ##
@@ -242,11 +250,16 @@ compute_true_value_continuous <- function(dgp, gamma,
 # ==============================================================================
 # 3. Data generation (2D state)
 # ==============================================================================
-generate_data_continuous <- function(dgp, N, TT, epsilon) {
+generate_data_continuous <- function(dgp, N, TT, epsilon, misclassification = "constant",
+                                      state_strength = .75, state_center = c(0,0), state_scale = c(1,1)) {
+  amplitude <- lure_error_amplitude(epsilon, misclassification, state_strength)
+  if (length(state_center)!=2L || length(state_scale)!=2L || any(!is.finite(state_center)) ||
+      any(!is.finite(state_scale)) || any(state_scale<=0)) stop("Use two finite centers and positive scales.")
   tr_shift <- dgp$tr_shift
   s1_a_int <- dgp$s1_a_int
   s2_a_int <- dgp$s2_a_int
   S1 <- S2 <- A <- Atilde <- R <- Sp1 <- Sp2 <- matrix(NA_real_, N, TT)
+  probabilities <- scores <- matrix(NA_real_, N, TT)
   for (i in 1:N) {
     s_init <- draw_initial_states(dgp, 1)
     s1 <- s_init[1, 1];  s2 <- s_init[1, 2]
@@ -254,7 +267,11 @@ generate_data_continuous <- function(dgp, N, TT, epsilon) {
       S1[i, t] <- s1;  S2[i, t] <- s2
       a <- rbinom(1, 1, dgp$b_prob)
       A[i, t] <- a
-      Atilde[i, t] <- ifelse(runif(1) < epsilon, 1 - a, a)
+      score <- tanh(((s1-state_center[1])/state_scale[1] +
+                       (s2-state_center[2])/state_scale[2])/2)
+      p_flip <- epsilon + amplitude * score
+      scores[i,t] <- score; probabilities[i,t] <- p_flip
+      Atilde[i, t] <- ifelse(runif(1) < p_flip, 1 - a, a)
       ## Transition with milder state-action interactions to improve overlap
       s1_new <- (1/2) * s1 + tr_shift * (2*a - 1) + s1_a_int * s1 * a +
         rnorm(1, 0, dgp$sigma_tr)
@@ -267,7 +284,9 @@ generate_data_continuous <- function(dgp, N, TT, epsilon) {
     }
   }
   list(S1 = S1, S2 = S2, A = A, Atilde = Atilde, R = R,
-       Sp1 = Sp1, Sp2 = Sp2)
+       Sp1 = Sp1, Sp2 = Sp2, misclassification_prob = probabilities, misclassification_score = scores,
+       misclassification = c(lure_error_metadata(probabilities, scores, A, Atilde,
+         epsilon, misclassification, state_strength), list(state_center=state_center,state_scale=state_scale)))
 }
 
 # ==============================================================================
@@ -335,7 +354,9 @@ generate_data_continuous <- function(dgp, N, TT, epsilon) {
     ## ---- E-step ----
     log_eta <- matrix(0, n, 2)
     for (a in 0:1) {
-      log_b  <- ifelse(a == 1, log(b_hat), log(1 - b_hat))
+      ## `a` is scalar while b_hat varies by observation.  Using ifelse()
+      ## here returns only b_hat[1] and silently recycles it to every row.
+      log_b  <- if (a == 1) log(b_hat) else log(1 - b_hat)
       mu_a   <- if (a == 0) mu_hat_0 else mu_hat_1
       log_mu <- dbinom(At_vec, 1, mu_a, log = TRUE)
       tRa    <- if (a == 0) tR0 else tR1
@@ -401,10 +422,15 @@ em_continuous <- function(dat, gamma, max_iter = 100, tol = 1e-3,
   sigma_R   <- best$sigma_R
   sigma_Sp1 <- best$sigma_Sp1;  sigma_Sp2 <- best$sigma_Sp2
 
-  ## Relabel so class 2 (A=1) has HIGHER mean Atilde
-  mean_at <- c(sum(eta[, 1] * At_vec) / sum(eta[, 1]),
-               sum(eta[, 2] * At_vec) / sum(eta[, 2]))
-  if (mean_at[1] > mean_at[2]) {
+  ## Paper label selector: compare both fitted measurement models over the
+  ## same empirical distribution of training states.
+  mean_mu <- c(
+    mean(predict(fit_mu0, newdata = data.frame(s1 = S1_vec, s2 = S2_vec),
+                 type = "response")),
+    mean(predict(fit_mu1, newdata = data.frame(s1 = S1_vec, s2 = S2_vec),
+                 type = "response"))
+  )
+  if (mean_mu[1] > mean_mu[2]) {
     eta <- eta[, 2:1, drop = FALSE]
     tmp <- fit_R0;  fit_R0  <- fit_R1;  fit_R1  <- tmp
     tmp <- fit_Sp1_0; fit_Sp1_0 <- fit_Sp1_1; fit_Sp1_1 <- tmp
@@ -440,6 +466,7 @@ em_continuous <- function(dat, gamma, max_iter = 100, tol = 1e-3,
   }
 
   list(eta = eta, n_iter = best$n_iter,
+       label_scores = mean_mu, label_swapped = mean_mu[1] > mean_mu[2],
        sigma_R = sigma_R, sigma_Sp1 = sigma_Sp1, sigma_Sp2 = sigma_Sp2,
        predict_theta_R = predict_theta_R,
        predict_theta_Sp1 = predict_theta_Sp1,
@@ -594,7 +621,7 @@ compute_eta_outfold <- function(em, S1_te, S2_te, At_te, R_te, Sp1_te, Sp2_te) {
 
   log_eta <- matrix(0, n, 2)
   for (a in 0:1) {
-    log_b  <- ifelse(a == 1, log(b_hat), log(1 - b_hat))
+    log_b  <- if (a == 1) log(b_hat) else log(1 - b_hat)
     mu_a   <- if (a == 0) mu_hat_0 else mu_hat_1
     log_mu <- dbinom(At_te, 1, mu_a, log = TRUE)
     tRa    <- if (a == 0) tR0 else tR1
@@ -616,33 +643,42 @@ compute_eta_outfold <- function(em, S1_te, S2_te, At_te, R_te, Sp1_te, Sp2_te) {
 # ==============================================================================
 # 9. LURE (multiply robust) estimator with K=2 cross-fitting
 # ==============================================================================
-mr_estimator_continuous <- function(dat, dgp, gamma) {
+mr_estimator_continuous <- function(dat, dgp, gamma, K = 2L) {
   N  <- nrow(dat$S1)
   TT <- ncol(dat$S1)
+  K <- as.integer(K)
+  if (length(K) != 1L || is.na(K) || K != 2L) {
+    stop("The LURE implementation uses K = 2 trajectory folds.")
+  }
+  if (N < K) stop("At least two trajectories are required for K = 2 cross-fitting.")
   bridge_clip_q <- 0.97
-  bridge_out <- select_bridge_index_continuous(dat)
-  bridge_scores <- bridge_out$bridge_scores
-  bridge_index <- bridge_out$bridge_index
-
-  if (!is.null(dgp$bridge_index)) {
-    bridge_index <- as.integer(dgp$bridge_index)[1]
-  }
-  if (!(bridge_index %in% c(1L, 2L))) {
-    stop("bridge_index must be either 1L or 2L.")
-  }
 
   ## K=2 cross-fitting: split trajectories into 2 folds
-  fold_ids <- sample(rep(1:2, length.out = N))
+  fold_ids <- sample(rep(seq_len(K), length.out = N))
 
-  phi_list    <- vector("list", 2)
-  direct_list <- numeric(2)
+  phi_list    <- vector("list", K)
+  direct_list <- numeric(K)
+  fold_bridge_index <- integer(K)
+  fold_bridge_scores <- matrix(NA_real_, K, 2L,
+                               dimnames = list(NULL, c("Sp1", "Sp2")))
 
-  for (k in 1:2) {
+  for (k in seq_len(K)) {
     train_idx <- which(fold_ids != k)
     test_idx  <- which(fold_ids == k)
     n_test    <- length(test_idx) * TT
 
     dat_train <- subset_dat(dat, train_idx)
+
+    ## Select the proxy on training data only, so the held-out fold is used
+    ## solely to evaluate the cross-fitted score.
+    bridge_out <- select_bridge_index_continuous(dat_train)
+    bridge_index <- bridge_out$bridge_index
+    if (!is.null(dgp$bridge_index)) bridge_index <- as.integer(dgp$bridge_index)[1]
+    if (!(bridge_index %in% c(1L, 2L))) {
+      stop("bridge_index must be either 1L or 2L.")
+    }
+    fold_bridge_index[k] <- bridge_index
+    fold_bridge_scores[k, ] <- bridge_out$bridge_scores
 
     ## Test-fold vectors
     S1_te  <- as.vector(dat$S1[test_idx, ])
@@ -725,11 +761,18 @@ mr_estimator_continuous <- function(dat, dgp, gamma) {
 
   }
 
-  direct  <- mean(direct_list)
-  phi_all <- unlist(phi_list)
+  ## With balanced trajectory folds this is the paper's average of the two
+  ## fold-specific estimators.  Writing each observation's complete
+  ## contribution also retains the fold-specific direct term in the IF.
+  contribution_all <- unlist(Map(`+`, phi_list, direct_list), use.names = FALSE)
+  V_hat <- mean(contribution_all)
+  centered_if <- contribution_all - V_hat
+  se <- sqrt(mean(centered_if^2) / (N * TT))
 
-  V_hat <- direct + mean(phi_all)
-  se    <- sqrt(var(phi_all) / (N * TT))
+  bridge_index <- if (length(unique(fold_bridge_index)) == 1L) {
+    fold_bridge_index[1]
+  } else 0L
+  bridge_scores <- colMeans(fold_bridge_scores)
 
   list(
     V_hat = V_hat,
@@ -737,7 +780,10 @@ mr_estimator_continuous <- function(dat, dgp, gamma) {
     ci_lo = V_hat - 1.96 * se,
     ci_hi = V_hat + 1.96 * se,
     bridge_index = bridge_index,
-    bridge_scores = bridge_scores
+    bridge_scores = bridge_scores,
+    fold_bridge_index = fold_bridge_index,
+    fold_bridge_scores = fold_bridge_scores,
+    fold_ids = fold_ids
   )
 }
 
@@ -745,11 +791,13 @@ mr_estimator_continuous <- function(dat, dgp, gamma) {
 # ==============================================================================
 # 12. One-replication wrapper
 # ==============================================================================
-one_rep_continuous <- function(dgp, N, TT, epsilon, gamma) {
-  dat <- generate_data_continuous(dgp, N, TT, epsilon)
+one_rep_continuous <- function(dgp, N, TT, epsilon, gamma, misclassification = "constant",
+                               state_strength = .75, state_center = c(0,0), state_scale = c(1,1)) {
+  dat <- generate_data_continuous(dgp, N, TT, epsilon, misclassification,
+                                 state_strength, state_center, state_scale)
 
   mr_out <- tryCatch(
-    mr_estimator_continuous(dat, dgp, gamma),
+    mr_estimator_continuous(dat, dgp, gamma, K = 2L),
     error = function(e) list(
       V_hat = NA_real_,
       ci_lo = NA_real_,
@@ -791,7 +839,7 @@ one_rep_continuous <- function(dgp, N, TT, epsilon, gamma) {
     error = function(e) NA_real_
   )
 
-  c(
+  out <- c(
     FQE = V_fqe,
     SIS = V_sis,
     MIS = V_mis,
@@ -804,4 +852,6 @@ one_rep_continuous <- function(dgp, N, TT, epsilon, gamma) {
     bridge_score_sp1 = unname(bridge_scores["Sp1"]),
     bridge_score_sp2 = unname(bridge_scores["Sp2"])
   )
+  attr(out, "misclassification") <- dat$misclassification
+  out
 }

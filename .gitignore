@@ -6,3 +6,15 @@
 .Rproj.user/
 sim_tabular_results.RData
 sim_tabular_plot.pdf
+
+# Python cache files
+__pycache__/
+*.py[cod]
+
+# Restricted MIMIC patient data and derived workspaces (see Code/MIMIC/README.md)
+/Code/MIMIC/*.csv
+/Code/MIMIC/*.RData
+/Code/MIMIC/**/*.rds
+/Code/MIMIC/lure_noise_jobs/
+/Code/MIMIC_archive_*/
+/Code/simulation_results/mimic_action_noise_*

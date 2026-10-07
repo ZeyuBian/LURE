@@ -12,7 +12,9 @@ library(dplyr)
 gamma <- 0.7
 N <- 50
 TT <- 50
-n_rep <- 100
+n_rep <- as.integer(Sys.getenv("LURE_N_REP", "100"))
+misclassification <- Sys.getenv("LURE_MISCLASSIFICATION", "constant")
+state_strength <- as.numeric(Sys.getenv("LURE_STATE_STRENGTH", "0.75"))
 epsilon_grid <- c(0.05, 0.1, 0.2,0.3)
 
 summarize_results <- function(results, V_true) {
@@ -30,7 +32,10 @@ summarize_results <- function(results, V_true) {
     arrange(epsilon, method)
 }
 
-run_full_simulation <- function(dgp, N, TT, epsilon_grid, gamma, n_rep) {
+run_full_simulation <- function(dgp, N, TT, epsilon_grid, gamma, n_rep,
+                                 misclassification = "constant", state_strength = .75) {
+	misclassification <- match.arg(misclassification, c("constant", "state_dependent"))
+	diagnostics <- list()
 	  methods <- c("FQE", "SIS", "MIS", "DRL", "LSTD", "MR")
 	V_true <- compute_true_value(dgp, gamma)$V_value
 
@@ -55,7 +60,10 @@ run_full_simulation <- function(dgp, N, TT, epsilon_grid, gamma, n_rep) {
 				cat("  rep", rep, "/", n_rep, "\n")
 			}
 
-			est <- one_rep(dgp, N = N, TT = TT, epsilon = eps, gamma = gamma)
+			est <- one_rep(dgp, N = N, TT = TT, epsilon = eps, gamma = gamma,
+                           misclassification = misclassification, state_strength = state_strength)
+      diagnostics[[length(diagnostics)+1L]] <- cbind(data.frame(rep=rep,epsilon=eps),
+        lure_error_diagnostic_row(attr(est,"misclassification")))
 
       ## Store point estimates
       est_methods <- est[c("FQE", "SIS", "MIS", "DRL", "LSTD", "MR")]
@@ -92,6 +100,9 @@ run_full_simulation <- function(dgp, N, TT, epsilon_grid, gamma, n_rep) {
 	print(as.data.frame(coverage))
 
 	list(
+		misclassification = misclassification,
+		state_strength = state_strength,
+		misclassification_diagnostics = do.call(rbind,diagnostics),
 		results = results,
 		summary = summary,
 		coverage = coverage,
@@ -107,7 +118,8 @@ run_full_simulation <- function(dgp, N, TT, epsilon_grid, gamma, n_rep) {
 dgp <- generate_dgp()
 
 sim_out <- run_full_simulation(dgp = dgp,N = N,TT = TT,epsilon_grid = epsilon_grid,
-                               gamma = gamma,n_rep = n_rep)
+                               gamma = gamma,n_rep = n_rep,
+                               misclassification = misclassification, state_strength = state_strength)
 
 
 library(ggplot2)
@@ -197,7 +209,8 @@ plot_simulation_results(
   n_rep = sim_out$n_rep
 )
 
-save(sim_out, file = "res.RData")
+save(sim_out, file = Sys.getenv("LURE_OUTPUT_FILE", if(misclassification=="constant")
+  "res.RData" else paste0("res_state_dependent_strength_",state_strength,".RData")))
 
 library(dplyr)
 

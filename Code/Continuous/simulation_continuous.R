@@ -16,7 +16,9 @@ library(ggplot2)
 gamma <- 0.7
 N <- 50
 TT <- 50
-n_rep <- 100
+n_rep <- as.integer(Sys.getenv("LURE_N_REP", "100"))
+misclassification <- Sys.getenv("LURE_MISCLASSIFICATION", "constant")
+state_strength <- as.numeric(Sys.getenv("LURE_STATE_STRENGTH", "0.75"))
 epsilon_grid <- c(0.05, 0.1, 0.2,0.3)
 
 # ==============================================================================
@@ -39,7 +41,11 @@ summarize_results <- function(results, V_true) {
 # ==============================================================================
 # Full simulation
 # ==============================================================================
-run_full_simulation <- function(dgp, N, TT, epsilon_grid, gamma, n_rep) {
+run_full_simulation <- function(dgp, N, TT, epsilon_grid, gamma, n_rep,
+                                 misclassification = "constant", state_strength = .75,
+                                 state_center = c(0,0), state_scale = c(1,1)) {
+  misclassification <- match.arg(misclassification,c("constant","state_dependent"))
+  diagnostics <- list()
   methods <- c("FQE", "SIS", "MIS", "DRL", "LSTD", "MR")
   set.seed(2324)
   V_true  <- compute_true_value_continuous(dgp, gamma)$V_value
@@ -68,7 +74,10 @@ run_full_simulation <- function(dgp, N, TT, epsilon_grid, gamma, n_rep) {
       }
 
       est <- one_rep_continuous(dgp, N = N, TT = TT,
-                                epsilon = eps, gamma = gamma)
+                                epsilon = eps, gamma = gamma, misclassification = misclassification,
+                                state_strength = state_strength, state_center = state_center, state_scale = state_scale)
+      diagnostics[[length(diagnostics)+1L]] <- cbind(data.frame(rep=rep,epsilon=eps),
+        lure_error_diagnostic_row(attr(est,"misclassification")))
 
       ## Store point estimates
       est_methods <- est[c("FQE", "SIS", "MIS", "DRL", "LSTD", "MR")]
@@ -126,7 +135,9 @@ run_full_simulation <- function(dgp, N, TT, epsilon_grid, gamma, n_rep) {
   cat("\n--- Selected Bridge Coordinate ---\n")
   print(as.data.frame(bridge_summary))
 
-  list(results  = results,
+  list(misclassification = misclassification, state_strength = state_strength,
+       state_center = state_center, state_scale = state_scale,
+       misclassification_diagnostics = do.call(rbind,diagnostics), results = results,
        summary  = summary,
        coverage = coverage,
        bridge_results = bridge_results,
@@ -150,11 +161,13 @@ dgp   <- generate_dgp_continuous(
 
 sim_out <- run_full_simulation(dgp = dgp, N = N, TT = TT,
                                epsilon_grid = epsilon_grid,
-                               gamma = gamma, n_rep = n_rep)
+                               gamma = gamma, n_rep = n_rep,
+                               misclassification = misclassification, state_strength = state_strength)
 
 print(sim_out$summary)
 
-save(sim_out, file = "res_continuous.RData")
+save(sim_out, file = Sys.getenv("LURE_OUTPUT_FILE", if(misclassification=="constant")
+  "res_continuous.RData" else paste0("res_continuous_state_dependent_strength_",state_strength,".RData")))
 
 library(dplyr)
 library(ggplot2)
@@ -248,7 +261,6 @@ plot_simulation_results(
 sim_out$ci_results %>%
   group_by(epsilon) %>%
   summarize(mean_cover = round(mean(covers), 2))
-
 
 
 

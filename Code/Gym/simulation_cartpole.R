@@ -9,6 +9,7 @@ mc_eval_N <- 10000
 mc_eval_T <- 400
 n_rep <- 100
 tau_grid <- c(0.05, 0.10, 0.20, 0.30)
+misclassification <- Sys.getenv("LURE_MISCLASSIFICATION", "constant")
 
 
 get_gym_script_dir <- function() {
@@ -19,6 +20,8 @@ get_gym_script_dir <- function() {
   if (length(frame_files) > 0L) {
     return(dirname(normalizePath(frame_files[length(frame_files)])))
   }
+  script_arg <- grep("^--file=", commandArgs(FALSE), value = TRUE)
+  if (length(script_arg)) return(dirname(normalizePath(sub("^--file=", "", script_arg[1]))))
   normalizePath(getwd())
 }
 
@@ -51,7 +54,8 @@ summarize_env_results <- function(results, V_true) {
 
 run_cartpole_simulation <- function(dgp, N, TT, mc_eval_N, mc_eval_T,
                                     tau_grid, gamma, n_rep,
-                                    offline_data_dir) {
+                                    offline_data_dir, misclassification = "constant") {
+  misclassification <- match.arg(misclassification, c("constant", "state_dependent"))
   methods <- c("FQE", "SIS", "MIS", "DRL", "LSTD", "MR")
   results <- data.frame(
     rep = integer(0),
@@ -116,13 +120,19 @@ run_cartpole_simulation <- function(dgp, N, TT, mc_eval_N, mc_eval_T,
         dgp,
         tau = tau,
         rep = rep,
-        data_dir = offline_data_dir
+        data_dir = offline_data_dir, misclassification = misclassification
       )
       if (!file.exists(offline_path)) {
         stop("Missing offline dataset: ", offline_path)
       }
 
       dat <- load_gym_dataset(offline_path)
+      if (dat$N != N || dat$T != TT) stop("Saved data dimensions do not match N and T.")
+      if (misclassification == "state_dependent" &&
+          (!identical(dat$misclassification$mode, misclassification) ||
+           !isTRUE(all.equal(dat$misclassification$tau, tau)))) {
+        stop("State-dependent dataset metadata does not match the requested scenario.")
+      }
       est <- evaluate_gym_estimators(dat, dgp, gamma, seed = rep)
       est_methods <- est[methods]
 
@@ -156,6 +166,7 @@ run_cartpole_simulation <- function(dgp, N, TT, mc_eval_N, mc_eval_T,
 
   list(
     env = "CartPole",
+    misclassification = misclassification,
     results = results,
     summary = summary,
     coverage = coverage,
@@ -251,7 +262,7 @@ sim_out <- run_cartpole_simulation(
   tau_grid = tau_grid,
   gamma = gamma,
   n_rep = n_rep,
-  offline_data_dir = offline_data_dir
+  offline_data_dir = offline_data_dir, misclassification = misclassification
 )
 
 print(sim_out$summary)
@@ -260,6 +271,6 @@ library(ggplot2)
 
 plot_cartpole_results(sim_out$results, sim_out$truth$V_true[1])
 
-save(sim_out, file = file.path(gym_dir, "res_cartpole.RData"))
-
+save(sim_out, file = file.path(gym_dir, if (misclassification == "constant")
+  "res_cartpole.RData" else "res_cartpole_state_dependent.RData"))
 

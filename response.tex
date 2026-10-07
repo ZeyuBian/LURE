@@ -1,0 +1,392 @@
+\documentclass[12pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{setspace}
+\doublespacing
+\usepackage{enumitem}
+\usepackage{needspace}
+\usepackage{amssymb}
+\usepackage{makecell}
+\usepackage{array} 
+\usepackage[]{natbib}
+\usepackage{bbm}
+\usepackage{amsmath,amsfonts,bm}
+\usepackage[parfill]{parskip}
+\usepackage{amsthm}
+\usepackage{microtype}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow} 
+\usepackage[toc,page]{appendix}
+\usepackage{comment}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{color}
+\usepackage{tikz}
+\usetikzlibrary{shapes,decorations,arrows,calc,arrows.meta,fit,positioning}
+\tikzset{
+    -Latex,auto,node distance =1 cm and 1 cm,semithick,
+    state/.style ={ellipse, draw, minimum width = 0.7 cm},
+    point/.style = {circle, draw, inner sep=0.04cm,fill,node contents={}},
+    bidirected/.style={Latex-Latex,dashed},
+    el/.style = {inner sep=2pt, align=right, sloped}
+}
+\usepackage{algorithm}
+\usepackage{chngcntr}
+\usepackage[noend]{algpseudocode}
+\algrenewcommand\textproc{}
+\algdef{SE}[SUBALG]{Indent}{EndIndent}{}{\algorithmicend\ }%
+\algtext*{Indent}
+\algtext*{EndIndent}
+\newcommand{\p}{{\mathbb{P}}}
+\newcommand{\pp}{{\mathbb{P}}^\pi}
+\newcommand{\Var}{{\mbox{Var}}}
+\newcommand{\Cov}{{\mbox{Cov}}}
+\newcommand{\Corr}{{\mbox{corr}}}
+\newcommand{\diag}{{\mbox{diag}}}
+\newcommand{\prob}{{\mathbb{P}}}
+\newcommand{\N}{{\mathcal{N}}}
+\newcommand{\btheta}{\boldsymbol{\theta}}
+\newcommand{\bTheta}{\boldsymbol{\Theta}}
+\newcommand{\vopt}{V^{\pi^*}}
+\newcommand{\res}[1]{{\color{red}{#1}}}
+\newcommand{\blambda}{\boldsymbol{\lambda}}
+\newcommand{\bU}{\boldsymbol{U}}
+\newcommand{\bA}{\boldsymbol{A}}
+\newcommand{\bR}{\boldsymbol{R}}
+\newcommand{\bH}{\boldsymbol{H}}
+\newcommand{\bG}{\boldsymbol{G}}
+\newcommand{\bg}{\boldsymbol{g}}
+\newcommand{\bh}{\boldsymbol{h}}
+\newcommand{\bD}{\boldsymbol{D}}
+\newcommand{\bB}{\boldsymbol{B}}
+\newcommand{\bF}{\boldsymbol{F}}
+\newcommand{\bpi}{\boldsymbol{\pi}}
+\newcommand{\bigeta}{\boldsymbol{\eta}}
+\newcommand{\bbeta}{\boldsymbol{\beta}}
+\DeclareMathOperator*{\expit}{expit}
+\DeclareMathOperator*{\KL}{KL}
+\DeclareMathOperator*{\st}{s.t.}
+\DeclareMathOperator*{\argmin}{arg\,min}
+\DeclareMathOperator*{\arginf}{arg\,inf}
+\DeclareMathOperator*{\argmax}{arg\,max}
+\newcommand\independent{\protect\mathpalette{\protect\independenT}{\perp}}
+\def\independenT#1#2{\mathrel{\rlap{$#1#2$}\mkern2mu{#1#2}}}
+\newcommand{\nind}{\mathrel{\not\independent}}
+\newcommand{\mytilde}[1]{\widetilde{\widetilde{#1}}}
+\newcommand{\vc}{\textrm{vec}}
+\newcommand{\0}{\boldsymbol{0}}
+\newcommand{\bgamma}{\boldsymbol{\gamma}}
+\newcommand{\Appendix}
+{% \appendix
+	\def\thesection{Appendix~\Alph{section}}
+	\def\thesubsection{A.\arabic{subsection}}
+}
+\theoremstyle{definition}
+\newtheorem{theorem}{Theorem}
+\newtheorem{prop}{Proposition}
+\newtheorem{lemma}{Lemma}
+\newtheorem{defi}{Definition}
+\newtheorem{remark}{Remark}
+\newtheorem{assumption}{Assumption}[section]
+\newtheorem{corollary}{Corollary}
+\newtheorem{example}{Example}
+\usepackage{dsfont}
+\usepackage{colortbl}
+\definecolor{lightblue}{rgb}{0.8, 0.9, 1}
+\definecolor{lightred}{rgb}{1, 0.8, 0.8}
+\usepackage{threeparttable}
+\renewcommand{\topfraction}{.95}
+\linespread{1.45}
+\newcommand{\RNum}[1]{\uppercase\expandafter{\romannumeral #1\relax}}
+\newcommand{\uargmin}[1]{\operatorname{arg}\underset{#1}{\operatorname{min}}\;}
+\newcommand{\RobustTop}{57.23}
+\newcommand{\NaturalTop}{91.51}
+\newcommand{\uargmax}[1]{\underset{#1}{\operatorname{arg}\,\operatorname{max}}\;}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Ls}{\mathcal{L}}
+\newcommand{\QDE}{\textrm{QDE}}
+\newcommand{\QIE}{\textrm{QIE}}
+\newcommand{\QTE}{\textrm{QTE}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\M}{\mathbb{M}}
+\newcommand{\papertitle}{Response to Reviewer Comments}
+\newcommand{\manuscripttitle}{Learning from the Unseen: Offline Reinforcement Learning with Hidden Actions}
+\newcommand{\paperauthors}{}
+\newcommand{\paperkeywords}{Offline reinforcement learning; Off-policy evaluation; Hidden actions; Measurement error}
+\newif\ifincludesupplement
+\includesupplementtrue
+\def\blue{\textcolor{blue}}
+\definecolor{green}{RGB}{20, 171, 132}
+\def\jb#1{{\color{jgreen}#1}}
+\def\bfblue#1{{\color{blue}\bf#1}}
+\newcommand{\ZB}[1]{{\color{cyan}{ #1}}}
+\newcommand{\ZL}[1]{{\color{red}{[\textbf{ZQ}: #1]}}}
+\newcommand{\LW}[1]{{\color{blue}{[\textbf{LW}: #1]}}}
+\usepackage{hyperref}
+\hypersetup{
+    unicode=true,
+	pdftoolbar=true,
+	pdfmenubar=true,
+	pdffitwindow=false,
+	pdfstartview={FitH},
+    pdftitle={\papertitle},
+    pdfauthor={\paperauthors},
+    pdfkeywords={\paperkeywords},
+	pdfnewwindow=true,
+	colorlinks=true,
+	linkcolor=cyan,
+	citecolor=blue,
+	filecolor=pink,
+	urlcolor=cyan
+}
+\newcommand{\blind}{1}
+\usepackage[utf8]{inputenc}
+\newcommand\blfootnote[1]{%
+	\begingroup
+	\renewcommand\thefootnote{}\footnote{#1}%
+	\addtocounter{footnote}{-1}%
+	\endgroup
+}
+\newcommand{\neighbor}[1]{\overline{#1}}
+\raggedbottom
+\usepackage{mathtools}
+\graphicspath{{fig/}}
+\DeclarePairedDelimiter\norm{\lVert}{\rVert}
+\newcommand{\reviewcomment}[1]{\par\begingroup\itshape\noindent\textbf{#1}:\ }
+\newcommand{\reviewresponse}{\par\endgroup\noindent\textbf{\textit{Response}}:\ }
+\newenvironment{reproducedtext}{\begin{quote}\small}{\end{quote}}
+
+\begin{document}
+\def\spacingset#1{\renewcommand{\baselinestretch}{#1}\small\normalsize}
+\spacingset{1.3}
+\if1\blind
+{\title{\papertitle\\[0.6em]
+\large Manuscript ID  JASA-RA-2026-1131 (261267618) \\[0.35em]
+\large ``\manuscripttitle''}
+\author{}
+\date{}
+\maketitle
+}\fi
+\spacingset{1.7}
+
+
+% \section*{To the Editor and Review Team}
+
+% \reviewcomment{Overall assessment} The reviewers agree that the manuscript addresses an important and timely problem in offline reinforcement learning: recorded actions may differ from the actions actually taken. They recognize the potential value of the identification framework, semiparametric estimation strategy, and theoretical development, and the editor would be pleased to consider a substantially revised version.
+% \reviewresponse
+
+% \reviewcomment{Comment} The practical motivation should be strengthened with clearer empirical evidence of action misrecording in the real-data setting, including an assessment of its likely extent. The paper should give a more careful account of the conditional-independence and surrogate assumptions, especially because reward, next state, and recorded action may remain related after conditioning on the true state and action. Sensitivity analyses or a clear robustness discussion would be valuable. The revision should also clarify the practical implications of the nuisance-estimation rate condition for asymptotic normality, compare or carefully position the method relative to approaches that account for action measurement error, examine convergence and initialization behavior of the numerical algorithm, study state-dependent misclassification and MIMIC-III sensitivity, and improve the presentation's concision, naturalness, and consistency.
+% \reviewresponse 
+
+
+
+
+\section*{Response to the Associate Editor}
+
+
+
+\subsection*{Major comments}
+
+\reviewcomment{Major Comment 1: Conditional independence} The conditional independence condition is central to identification but may be difficult to justify in realistic reinforcement learning and health-care settings. The revision should explain carefully when the recorded surrogate action, reward, and next state can plausibly be conditionally independent given the current state and true action. It should also examine sensitivity to violations of this condition, either through a formal extension or a well-designed robustness analysis that shows how departures affect policy-value estimation.
+\reviewresponse
+We thank the Associate Editor for this comment, which both reviewers also raised. We agree that Assumption~3.1(iii) is central to identification and that the original manuscript did not discuss it carefully enough. We have made four changes, described below: (1) a discussion in Section~3 of when each part of the condition is plausible; (2) a formal extension that allows the reward to depend on the next state; (3) an analytical characterization of how violations bias the value estimate; and (4) a discussion of unmeasured common causes.
+
+\textbf{1. When is the condition plausible?} Assumption~3.1(iii) is equivalent to the following two conditions:
+\begin{enumerate}[label=(\alph*)]
+    \item $\widetilde A\independent (R,S')\mid (S,A)$: given the state and the true action, the recorded action carries no further information about the reward or the next state;
+    \item $R\independent S'\mid (S,A)$: given the state and the true action, the reward and the next state are independent.
+\end{enumerate}
+The two conditions differ in nature, and we now discuss them separately.
+
+Condition (a) is the nondifferential error condition that is standard in the measurement-error and misclassification literature \citep[Chapter~2]{carroll2006measurement}. \citet{hu2008identification} and \citet{zhou2024causal} impose the same condition. It is natural when the record is produced by a documentation process that does not act on the system. In the ICU, for example, the patient's physiology over the next four hours depends on the fluid that was delivered, not on whether or when the nurse charted it. Condition (a) does not require misrecording to be completely random. The measurement model $\Pr(\widetilde A=a'\mid S,A)$ may depend on the state in any way, so recording errors may be more frequent for sicker patients or during particular shifts, provided these factors are part of $S$. Condition (a) can fail in two ways. First, an unmeasured factor may affect both the recording and the outcome, for example an episode of acute deterioration during which clinicians put care ahead of documentation. Second, a record may be completed or corrected after the outcome is observed. The first risk can be reduced by including workload and timing variables (time of day, shift, weekend) in the state. The second can be avoided by using only records stored before the next decision time; this is possible in MIMIC-III, where each input record carries the time it was stored.
+
+Condition (b) is where our framework is more restrictive than a standard MDP, which allows any joint distribution of $(R,S')$ given $(S,A)$. We now state this explicitly. Condition (b) is plausible when the reward is an immediate utility or cost of the current state and action, with noise unrelated to the transition noise. Examples include treatment costs, dose or toxicity penalties and resource use in health care; quadratic state and control costs in control and robotics; and the Pendulum environment of OpenAI Gym \citep{brockman2016openai}, whose reward is computed from the current angle, angular velocity and applied torque. All three simulation designs in the paper, including CartPole, are of this type. As the reviewers point out, however, condition (b) fails when the reward is a function of the next state. Examples are rewards defined through the next-period SOFA score in sepsis, which is itself a component of the next state, and forward-velocity rewards in locomotion tasks.
+
+Although both conditions involve the latent action and cannot be verified directly, they have testable implications. For example, under Assumption~3.1(iii) the conditional distribution of $(R,S')$ given $S=s$ is a mixture of two product distributions. Hence, after discretizing $R$ and $l(S')$ into $K\ge 3$ categories, the $K\times K$ matrix of joint probabilities given $S=s$ has rank at most two. This gives a falsification check when the state is discrete or discretized.
+
+The revised text in Section~3, after Assumption~3.1, reads:
+\begin{reproducedtext}
+Assumption~3.1(ii) requires the true action to affect both the reward and the next state, and the record to be informative about the true action. Assumption~3.1(iii) consists of two parts: $\widetilde A\independent (R,S')\mid (S,A)$ and $R\independent S'\mid (S,A)$. The first part says that, given the state and the true action, the record carries no further information about the reward or the next state. This is the nondifferential error condition that is standard for misclassified variables \citep{carroll2006measurement}. It holds when the record is a by-product of documentation that does not itself affect the system. It allows the misrecording probability to depend on the state, for example to be higher for sicker patients. It fails if an unmeasured factor affects both the recording and the outcome, or if records are completed after the outcome is known. The second part is more restrictive than a standard MDP. It is plausible when the reward is an immediate utility or cost of the current state and action, as in all our simulation designs, but not when the reward is a function of the next state. Appendix~\res{C} replaces this part by a weaker condition that allows such rewards, and characterizes the bias of LURE when Assumption~3.1(iii) fails. The bias is largest when the effects required by Assumption~3.1(ii) are weak.
+\end{reproducedtext}
+
+\textbf{2. A formal extension that allows the reward to depend on the next state.} Assumption~3.1(iii) is used only to provide three conditionally independent measurements of the hidden action: the record, the reward and the next state. When the reward depends on the next state, the second and third measurements can be taken from $(R,S')$ in other ways. We have added the following result to Appendix~\res{C}.
+\begin{reproducedtext}
+\textbf{Assumption C.1.} (a) $\widetilde A\independent (R,S')\mid (S,A)$ and $\widetilde A\nind A\mid S$. (b) There exist known functions $f_1$ and $f_2$ such that $Y_1=f_1(R,S')$ and $Y_2=f_2(R,S')$ satisfy $Y_1\independent Y_2\mid (S,A)$, $Y_1\nind A\mid S$ and $Y_2\nind A\mid S$.
+
+\textbf{Proposition C.1.} Under Assumption~3.1(i) and (iv) and Assumption~C.1, the policy value $V(\pi)$ is identified.
+
+\textit{Proof.} The triple $(\widetilde A,Y_1,Y_2)$ satisfies the conditions used in the proof of Theorem~1, with $(R,S')$ replaced by $(Y_1,Y_2)$. Hence $\Pr(\widetilde A=a'\mid S=s,A=a)$ and $b(a\mid s)$ are identified as in that proof. By part (a), for every $(r,s')$ and $\tilde a\in\{0,1\}$,
+\[
+p(\tilde a,r,s'\mid s)=\sum_{a\in\{0,1\}}\Pr(\widetilde A=\tilde a\mid S=s,A=a)\,b(a\mid s)\,p(r,s'\mid s,a).
+\]
+This is a linear system in $\{b(a\mid s)p(r,s'\mid s,a)\}_{a=0,1}$ whose coefficient matrix is $P_{\widetilde A,A}(s)$, which is invertible under Assumption~3.1(iv). Therefore $p(r,s'\mid s,a)$ is identified whenever $b(a\mid s)>0$. The reward function and the transition kernel follow, and so does $V(\pi)$. \hfill$\square$
+\end{reproducedtext}
+Assumption~3.1(iii) is the special case $Y_1=R$ and $Y_2=S'$. Assumption~C.1 places no restriction on how $R$ depends on $S'$; in particular, $R$ may be a deterministic function of $S'$. For example, if the next state splits into two blocks of coordinates, $S'=(U,W)$, whose transition noises are independent given $(S,A)$, one can take $Y_1=U$ and $Y_2=W$. Such a split exists whenever different state coordinates are driven by independent innovations, as in the continuous-state and CartPole designs of Section~6.
+
+On estimation, Algorithm~2 extends directly: the reward density $h(r\mid s,a)$ is replaced by $h(r\mid s,a,s')$ in the complete-data likelihood, and in the example above the transition density factorizes over the two blocks. The posterior-imputation estimator of Appendix~B then applies without change, because it uses the latent-action model only through the posterior $\eta$, which remains identified. The multiply robust estimator requires more work. In Equation~(2), the reward residual is weighted by a function of $l(S')$, and the next-state residual by a function of $R$. When $R$ depends on $S'$, neither weight is conditionally independent of the residual it multiplies. We therefore present the estimation theory under Assumption~C.1 as a direction for future work in the Discussion.
+
+\textbf{3. How violations affect the value estimate.} To show how departures from Assumption~3.1(iii) affect policy-value estimation, we derive the bias of LURE under each type of violation. We have added the following result to Appendix~\res{C}.
+\begin{reproducedtext}
+For $X\in\{\widetilde A,R,S'\}$ let $\Delta_X(s,a)=\theta_X(s,a)-\theta_X(s,1-a)$, and let $\Delta_{\mathcal M}(s,a)=\mathcal MV^\pi(s,a)-\mathcal MV^\pi(s,1-a)$. Let $\bar V(\pi)=V(\pi)+\E\{\varphi^\pi(O)\}$, where $\varphi^\pi$ is the function in Equation~(2) with every nuisance function set to its true value. $\bar V(\pi)$ is the probability limit of LURE when the nuisance functions are known.
+
+\textbf{Proposition C.2.} Suppose Assumption~3.1(i), (ii) and (iv) hold.
+\begin{enumerate}[label=(\alph*)]
+\item If $\widetilde A\independent (R,S')\mid (S,A)$ but $R$ and $S'$ may be dependent given $(S,A)$, then
+\begin{multline*}
+\bar V(\pi)-V(\pi)=\frac{1}{1-\gamma}\,\E_{(S,A)\sim p^*}\bigg[\frac{\Cov\{R,l(S')\mid S,A\}}{\Delta_{S'}(S,A)}\\
++\gamma\,\frac{\Cov\{R,V^\pi(S')\mid S,A\}}{\Delta_R(S,A)}\bigg].
+\end{multline*}
+\item If $S'\independent (\widetilde A,R)\mid (S,A)$ but $\widetilde A$ and $R$ may be dependent given $(S,A)$, then
+\begin{multline*}
+\bar V(\pi)-V(\pi)=\frac{1}{1-\gamma}\,\E_{(S,A)\sim p^b}\bigg[\frac{\Cov(\widetilde A,R\mid S,A)}{\Delta_{\widetilde A}(S,A)}\\
+\times\left\{\omega(S,A)+\gamma\,\omega(S,1-A)\,\frac{\Delta_{\mathcal M}(S,A)}{\Delta_R(S,A)}\right\}\bigg].
+\end{multline*}
+\item If $R\independent (\widetilde A,S')\mid (S,A)$ but $\widetilde A$ and $S'$ may be dependent given $(S,A)$, then
+\begin{multline*}
+\bar V(\pi)-V(\pi)=\frac{1}{1-\gamma}\,\E_{(S,A)\sim p^b}\bigg[\omega(S,1-A)\,\frac{\Delta_R(S,A)\,\Cov\{\widetilde A,l(S')\mid S,A\}}{\Delta_{\widetilde A}(S,A)\,\Delta_{S'}(S,A)}\\
++\gamma\,\omega(S,A)\,\frac{\Cov\{\widetilde A,V^\pi(S')\mid S,A\}}{\Delta_{\widetilde A}(S,A)}\bigg].
+\end{multline*}
+\end{enumerate}
+
+\textit{Proof.} Write $g_a=e_a r_a$ and $g_a'=e_a s_a$, where $e_a$, $r_a$ and $s_a$ are the factors of $g_a$ and $g'_a$ in Theorem~2 that involve $\widetilde A$, $R$ and $l(S')$, respectively. Each factor has conditional mean $\mathds 1(A=a)$ given $(S,A)$. Condition each term of Equation~(2) on $(S,A)$ and factor the conditional expectations using the independence that is maintained. For example, in case (a), $\E\{g'_a(R-\theta_R(S,a))\mid S,A\}=\mathds 1(A=a)\Cov\{l(S'),R\mid S,A\}/\Delta_{S'}(S,A)$ and $\E\{g_a(V^\pi(S')-\mathcal MV^\pi(S,a))\mid S,A\}=\mathds 1(A=a)\Cov\{R,V^\pi(S')\mid S,A\}/\Delta_{R}(S,A)$. Summing over $a$ and using $\E_{p^b}\{\omega(S,A)f(S,A)\}=\E_{p^*}\{f(S,A)\}$ gives (a). Cases (b) and (c) are analogous; there the terms with $a=1-A$ no longer vanish. \hfill$\square$
+\end{reproducedtext}
+Proposition~C.2 leads to three conclusions. First, the bias is linear in the conditional covariances that Assumption~3.1(iii) sets to zero, so small departures lead to small bias. Second, each covariance is divided by a proxy contrast $\Delta$. A strong effect of the action on the reward and the next state, and an accurate record, therefore make LURE less sensitive; violations matter most when the proxies are weak. Third, in case (a) the first term vanishes when the proxy feature $l(S')$ is conditionally uncorrelated with the reward, which gives practical guidance for choosing the proxy. Only the second term, which carries the factor $\gamma$, then remains. The formulas also yield a simple sensitivity analysis. Since $|\Cov(X,Y\mid S,A)|\le\rho\,\mathrm{sd}(X\mid S,A)\,\mathrm{sd}(Y\mid S,A)$ when the conditional correlation is at most $\rho$ in absolute value, a user-specified bound $\rho$ gives a bound on the bias. Proposition~C.2 holds the nuisance functions at their true values, so it isolates the effect of the violation on the estimating equation. When the nuisance functions are estimated by Algorithm~2 under a misspecified likelihood, they converge to pseudo-true values, which can add further bias. We state this in the Appendix.
+
+\textbf{4. Unmeasured common causes.} If an unmeasured variable affects the record and also $(R,S')$ given $(S,A)$, the data come from a partially observed process. In the MDP framework, the state is chosen to contain the information that makes the process Markov, so common causes that are measured should be included in $S$. When they are not measured, a natural approach is to replace $S_t$ by the observed history, as is standard for dynamic treatment regimes, in the hope that past measurements carry enough information about the latent factor. This connects our problem to off-policy evaluation in partially observable environments \citep{tennenholtz2020off,shi2022minimax,miao2022off,bennett2024proximal}. Combining hidden actions with a latent state requires new identification arguments, and we list it as future work. The revised Discussion reads:
+\begin{reproducedtext}
+Our identification strategy relies on the conditional independence in Assumption~3.1(iii). The part requiring the record to be nondifferential is standard in the measurement-error literature, while the part separating the reward from the next state is more restrictive than a standard MDP. Appendix~\res{C} shows that the latter can be replaced by a weaker condition that allows the reward to depend on the next state, and gives the bias of LURE when Assumption~3.1(iii) fails. Extending the multiply robust estimator and its theory to the weaker condition is left for future work. A harder problem arises when an unmeasured factor affects both the record and the outcomes. The process is then partially observed. A natural approach is to use the observed history as the state, as in dynamic treatment regimes, and to build on recent work on off-policy evaluation in partially observable environments \citep{tennenholtz2020off,shi2022minimax,miao2022off,bennett2024proximal}.
+\end{reproducedtext}
+
+\reviewcomment{Major Comment 2: Empirical case for hidden-action misrecording} The empirical case for hidden-action misrecording in the MIMIC-III application needs to be made more concrete. Please provide direct exploratory evidence, where feasible, about discrepancies in recorded treatment, quantify the implied or estimated extent of misclassification, and clarify what aspect of the data-generating or preprocessing pipeline makes the true action latent. The simulation and application analyses should also examine state-dependent misclassification and assess how sensitive the policy conclusions are to alternative misclassification mechanisms, proxy choices, and clinically plausible specifications.
+\reviewresponse
+We thank the Associate Editor for this comment. We agree that the original motivation was too general. We have revised the Introduction and Section~7 to explain which step of the data pipeline makes the true action latent, to provide exploratory evidence of discrepancies, and to report the implied extent of misclassification.
+
+\textbf{What makes the true action latent.} In our application, as in most RL analyses of the MIMIC-III sepsis cohort \citep{komorowski2018artificial,gottesman2019guidelines}, the action is not a recorded variable. It is constructed from nursing documentation of fluid inputs. Each IV-fluid record contains a start time, an end time and a rate or amount entered by the bedside nurse. The preprocessing pipeline spreads each record over 4-hour blocs, sums the volumes within each bloc and discretizes the total. Our binary action indicates whether this total is \res{positive / above the chosen threshold}. The quantity of clinical interest is different: whether IV fluid therapy was actually delivered to the patient during the bloc. The recorded action can differ from it for the following reasons, each documented in MIMIC-III itself or in the clinical literature.
+\begin{enumerate}[label=(\roman*)]
+    \item \textit{Documentation errors.} MetaVision, the system used in MIMIC-III from 2008 onwards, flags input records whose information was entered incorrectly and later rewritten. According to the MIMIC-III documentation, the rates and amounts in these rows were not delivered. Unless the pipeline removes these rows, they are counted as delivered fluid, and the flag captures only errors that were noticed and corrected.
+    \item \textit{Timing errors.} Records are often entered after the fact, and each record carries a storage time that can differ from the documented start time. Because the pipeline assigns fluid to blocs using the documented times, an infusion recorded with an inaccurate start or end time is attributed to the wrong bloc. This changes the recorded action in two adjacent blocs.
+    \item \textit{Incomplete and inaccurate charting.} Studies of ICU documentation report substantial gaps between what is given and what is recorded. \citet{perren2011fluid} found that nurse-recorded fluid balances were complete in only 38\% of cases, and about one third contained arithmetic errors. \citet{raimann2024mind} compared bedside checklists with the electronic record and found that, for four of the five drug classes studied, fewer than half of the bolus administrations appeared in the electronic record.
+    \item \textit{Incidental volume.} Much of the IV volume recorded in the ICU is ``fluid creep'': carrier fluid, drug diluent and line flushes, which do not reflect a decision to give fluid therapy. \citet{vanregenmortel2018maintenance} found that fluid creep accounted for about one third of the total daily fluid volume in a tertiary ICU. In our cohort, \res{about 19\%} of blocs recorded as treated contain only volumes typical of carrier fluid or line flushes (\res{at most 45 mL per 4 hours}).
+    % NOTE: 19% = 15.7% (dose code 1) / 82.6% (any IV), from Code/MIMIC/README.md, Section 2. Please verify.
+    \item \textit{Two information systems.} MIMIC-III combines data from CareVue (2001--2008) and MetaVision (2008--2012), which document fluid inputs differently and store them in separate tables \citep{johnson2016mimic}. Harmonizing the two adds another source of error.
+\end{enumerate}
+A higher volume threshold removes the most obvious cases in (iv), but it does not remove (i)--(iii). Because the volume is itself recorded with error, no threshold on the recorded volume recovers the delivered treatment. The delivered treatment acts on the patient's physiology, while the record is an error-prone by-product of documentation. This is the structure assumed in Section~3. It also supports the nondifferential part of Assumption~3.1(iii) (see our response to Major Comment~1).
+
+\textbf{Exploratory evidence.} Because the delivered treatment is never recorded in MIMIC-III, discrepancies cannot be observed record by record. We therefore provide indirect evidence, summarized in a new figure in the Introduction (Figure~1):
+\begin{enumerate}[label=(\alph*)]
+    \item the distribution of the recorded 4-hour IV volume, showing the share of blocs that count as treated only because of carrier-level volumes;
+    \item \res{for MetaVision stays, the share of IV-fluid records flagged as rewritten, and the distribution of the delay between the documented start time and the storage time, including the share of records whose delay crosses a bloc boundary};
+    \item the model-implied misrecording probability across SOFA strata (see below).
+\end{enumerate}
+\res{[Figure and numbers to be added.]}
+% NOTE: panel (b) needs the raw MIMIC-III INPUTEVENTS_MV table (STATUSDESCRIPTION, STARTTIME, STORETIME); the processed CSV does not contain these fields.
+
+\textbf{Extent of misclassification.} The fitted latent-action model gives an estimate of the misrecording rate. We report the model-implied overall rate
+\[
+\widehat\Pr(\widetilde A\neq A)=\frac{1}{NT}\sum_{i=1}^N\sum_{t=1}^T\widehat\eta\big(O_{i,t};1-\widetilde A_{i,t}\big),
+\]
+together with the estimated sensitivity $\widehat\Pr(\widetilde A=1\mid A=1)$ and specificity $\widehat\Pr(\widetilde A=0\mid A=0)$, overall and by SOFA stratum. The estimated overall misrecording rate is \res{[value]}. \res{[One sentence comparing it with the range in (i)--(iv) and with the simulation scenarios $\tau\in\{0.05,0.1,0.2,0.3\}$.]}
+% NOTE: Code/MIMIC/README.md, Section 6, reports that the current EM latent class tracks lab carry-forward rather than IV fluids, with P(tilde A = 1 | latent) = 0.815 vs 0.831. Resolve this before reporting these rates.
+
+\textbf{State-dependent misclassification and sensitivity.} Assumption~3.1 is imposed conditionally on the state, so the framework already allows the misrecording probabilities to depend on the state. The new simulations with state-dependent misclassification and the sensitivity analyses of the MIMIC-III results to the misclassification mechanism, the proxy choice and the model specification are described in our response to Reviewer~1, Comment~5.
+
+\reviewcomment{Major Comment 3: Nuisance-estimation rate conditions} The practical meaning of the nuisance-estimation rate conditions for asymptotic normality requires further development. In particular, please discuss which commonly used statistical or machine-learning estimators can plausibly attain the required rates in the settings considered, what smoothness or complexity restrictions are needed, and what inferential behavior should be expected when one or more nuisance components converge more slowly.
+\reviewresponse
+
+\begin{itemize}
+    \item how to do this? I think maybe we need to assume that posterior can be estimated well? what do you think.
+\end{itemize}
+
+\reviewcomment{Major Comment 4: Alternative approaches} The numerical comparisons currently use methods that treat the noisy surrogate as the true action, so their deterioration under misclassification is expected. Please discuss and, where feasible, compare against alternative approaches that adjust for treatment or action measurement error, latent classes, or proxy variables. If no directly applicable competitor exists, the revision should explain the precise incompatibility and include informative oracle or partially adjusted benchmarks that separate the costs of latent-action recovery from the remaining estimation error.
+\reviewresponse We use posterior to do imputation, then use standard FQE. Moreover, the three nuisances are estimated using \citet{hu2008identification}.
+
+\reviewcomment{Major Comment 5: Computational assessment} The iterative latent-action procedure needs a more complete computational assessment. Please study convergence across multiple initializations, sensitivity to initialization, stopping criteria and tuning choices, and the finite-sample frequency and consequences of label switching or weak label separation. These results should be reported across the main simulation settings and should clarify how practitioners can diagnose instability.
+\reviewresponse
+\begin{itemize}
+    \item report more details/metrics from simulation in supplement. currently, the tuning parameters include: starting values, number of iteration (a fixed number); consider whether we need to change the stop rule to some convergence criterion
+    \item label switching may refer to the case where we mistakenly flip the label
+    \item discuss how to diagnose instability
+\end{itemize}
+
+\subsection*{Minor comment}
+
+\reviewcomment{Minor Comment 1: Editorial revision} Please give the manuscript a careful editorial pass to improve clarity, concision, grammatical accuracy, and consistency of notation and terminology.
+\reviewresponse
+
+\section*{Response to Reviewer 1}
+
+
+
+\reviewcomment{Comment 1: Conditional independence and surrogate relevance} While the authors have clearly stated the Conditional independence and Surrogate relevance assumptions in Assumption 3.1, the practical plausibility of conditional independence deserves more empirical discussion in real-world health care applications. For example, could there exist unmeasured common factors jointly affecting the recorded surrogate action $\widetilde{A}$, reward and next state even given true state action pairs? The authors should add sensitivity analysis or informal robustness discussion to evaluate how violations of these core identification assumptions would bias policy value estimates in the revised version.
+\reviewresponse
+We thank the reviewer for this comment. The Associate Editor raised the same issue, and our response to Major Comment~1 gives full details. Here we summarize the points most relevant to health-care applications.
+
+\textit{Plausibility in health care.} Assumption~3.1(iii) consists of two parts: $\widetilde A\independent (R,S')\mid (S,A)$ and $R\independent S'\mid (S,A)$. The first part says that the record is nondifferential. This is plausible in EHR data because the record is a by-product of documentation: given the treatment actually delivered and the patient's state, whether and when it was charted does not change the patient's physiology. The measurement model may depend on the state, so documentation that is less reliable for sicker patients, or during busy shifts, is allowed as long as the relevant variables are in $S$. This matters in practice. \citet{raimann2024mind} found that ICU documentation gaps were larger on weekdays and during early shifts, which is exactly the kind of state-dependent misrecording that the framework accommodates once shift and day are included in the state. The second part is more restrictive than a standard MDP. It can fail, for example, when the reward is the next-period SOFA score. Proposition~C.1 in the revised Appendix removes this part and allows the reward to be any function of the next state.
+
+\textit{Unmeasured common factors.} We agree that a factor affecting both the record and the outcomes, given the true state and action, would violate the first part. An example is an episode of acute deterioration during which clinicians put care ahead of documentation. In the MDP framework, the state is meant to contain the information needed to make the process Markov, so measured common causes, such as acuity scores, workload indicators and time of day, should be included in $S$. If the common factor is not measured, the data come from a partially observed process, and the current method does not apply directly. A promising direction is to use the observed history, rather than the current state, as the state, as is standard for dynamic treatment regimes, in the hope that past measurements carry enough information about the latent factor. This links our problem to off-policy evaluation in partially observable environments \citep{tennenholtz2020off,shi2022minimax,miao2022off,bennett2024proximal}. Combining it with hidden actions requires substantial new work, and we have added it to the Discussion as future research.
+
+\textit{How violations bias the value estimate.} Proposition~C.2 in the revised Appendix gives the bias of LURE for each type of violation. For an unmeasured factor that makes recording errors more likely when outcomes are worse, case (b) applies: the bias is proportional to $\Cov(\widetilde A,R\mid S,A)/\Delta_{\widetilde A}(S,A)$, where $\Delta_{\widetilde A}(S,A)$ measures how informative the record is. The bias therefore grows with the strength of the common factor and is amplified when the record is weakly informative. The same formulas give a simple sensitivity analysis: bounding the residual conditional correlation by $\rho$ bounds the bias.
+
+\textit{Surrogate relevance.} Assumption~3.1(iv) only requires the record to be more informative than a random guess, that is, $\Pr(\widetilde A=1\mid A=1,S=s)>\Pr(\widetilde A=1\mid A=0,S=s)$. This holds whenever, for each true action, most records are correct, which is the expected situation for clinical documentation. The relevance conditions in Assumption~3.1(ii) require the true action to affect the reward and the next state. Proposition~C.2 shows that the method is most sensitive to violations of Assumption~3.1(iii) when these effects are weak, and we now state this in Section~3.
+
+\reviewcomment{Comment 2: The $\alpha_{\min}>1/4$ rate condition} Theorem 4 requires the nuisance function estimation rate lower bound $\alpha_{\min}>1/4$ to guarantee asymptotic normality. This condition is fairly strong for high-dimensional nonparametric or machine learning based nuisance estimation. The authors need give some discusses about this condition, and give some comments on whether common modern machine learning learners can satisfy such conditions in practice, and discuss consequences when this condition fails.
+\reviewresponse
+
+\begin{itemize}
+    \item same as previous one
+\end{itemize}
+
+\reviewcomment{Comment 3: Measurement-error-adjusted alternatives} All competing baseline estimators simply replace the true action $A$ with the noisy surrogate $\widetilde{A}$. No comparisons are made against alternative measurement error adjusted methods for offline RL. The authors need to provide some discussions regarding this issue in details.
+\reviewresponse
+
+\begin{itemize}
+    \item same as before
+\end{itemize}
+
+\reviewcomment{Comment 4: EM convergence, initialization, and label swapping} Please improve numerical investigation of Algorithm 2's EM-style convergence, initialization sensitivity and label-swap finite sample risk.
+\reviewresponse
+
+\reviewcomment{Comment 5: State-dependent misclassification and MIMIC-III sensitivity} For simulation studies and real data analysis, please add the simulation example about state-dependent misclassification setting, and please add sensitivity analyses for the MIMIC-III real data analysis.
+\reviewresponse
+
+\reviewcomment{Comment 6: Tuning parameters and stopping criteria} Please give some discussions on tuning parameters, stopping criteria for the iterative algorithm.
+\reviewresponse
+
+\section*{Response to Reviewer 2}
+
+\reviewcomment{Overall assessment} The paper addresses an important gap in off-policy evaluation: recorded actions may differ from the actions actually taken. The proposed method draws on ideas from causal inference while offering insights in the reinforcement-learning setting: the next state provides a natural proxy for the latent action and is conditionally independent of the recorded surrogate action given the current state and true action. Leveraging this structure, the paper establishes identification of the target policy value, derives an observed-data influence function, and develops an estimator with numerical and theoretical performance guarantees. Overall, the reviewer believes the paper makes a useful and timely contribution that is well suited to JASA.
+\reviewresponse
+
+\subsection*{Major comments}
+
+\reviewcomment{Comment 1: Empirical motivation} The motivation could be substantially strengthened by providing more direct empirical evidence that action misrecording is an issue in the real-data application. In particular, the authors might conduct exploratory analyses, ideally with visualizations in the Introduction, to illustrate potential discrepancies between the recorded and true actions. It would also be particularly informative to quantify the extent of misclassification, for example, the overall misrecording rate. Such evidence would make the hidden-action problem more concrete and strengthen the motivation of the paper.
+\reviewresponse
+We thank the reviewer for this suggestion. The Associate Editor raised the same point, and our response to Major Comment~2 gives full details. In brief:
+\begin{itemize}
+    \item We now explain which step of the MIMIC-III pipeline makes the true action latent. The action is not recorded directly. It is reconstructed from nursing documentation of fluid inputs, which is spread over 4-hour blocs and then discretized. The reconstructed action can differ from the treatment delivered because of documentation errors, timing errors, incomplete charting, incidental volume such as carrier fluid and drug diluent, and the merging of two clinical information systems. We support each mechanism with the MIMIC-III documentation or the clinical literature.
+    \item Following the reviewer's suggestion, we have added a figure to the Introduction (Figure~1) that illustrates the discrepancies: the distribution of recorded 4-hour volumes, including blocs that count as treated only because of carrier-level volume; \res{indicators of documentation and timing errors in the raw input records}; and the model-implied misrecording probability across SOFA strata.
+    \item We report the overall misrecording rate implied by the fitted latent-action model, $\widehat\Pr(\widetilde A\neq A)=\res{[value]}$, together with the estimated sensitivity and specificity of the record.
+\end{itemize}
+Since the delivered treatment is never recorded in MIMIC-III, record-level discrepancies cannot be observed directly, and we say so in the paper. The evidence above is indirect, but it shows that the recorded action is an error-prone construction rather than a direct measurement of the treatment. The revised motivating paragraph in the Introduction reads:
+\begin{reproducedtext}
+Our work is motivated by the sepsis cohort from MIMIC-III \citep{johnson2016mimic}, which has been widely used to study intravenous fluid and vasopressor strategies with RL \citep{komorowski2018artificial,gottesman2019guidelines}. In these analyses, the treatment is not a recorded variable. It is reconstructed from nursing documentation of fluid inputs, which is spread over 4-hour intervals and then discretized, and the result can differ from the treatment actually delivered. ICU documentation is often incomplete or entered after the fact \citep{perren2011fluid,raimann2024mind}. Entries later found to be wrong are rewritten, errors in documented times move fluid into the wrong interval, and much of the recorded fluid volume is carrier fluid and drug diluent rather than fluid therapy \citep{vanregenmortel2018maintenance}. Figure~1 illustrates these discrepancies in our cohort. \res{[One sentence on the implied misrecording rate.]} Standard offline RL methods treat the reconstructed action as the treatment delivered, and so evaluate policies under the wrong state--action mechanism.
+\end{reproducedtext}
+
+\reviewcomment{Comment 2: Conditional independence} The conditional-independence assumption appears fairly strong and may be violated in practice. Reward and next state are often intrinsically related; in many reinforcement-learning formulations, reward is modeled as a deterministic or near-deterministic function of the next state. Likewise, the recorded surrogate action may not be conditionally independent of either reward or next state, even after conditioning on the current state and true action. It would therefore be practically valuable to discuss the sensitivity of the proposed method to violations of this assumption and, if possible, develop extensions that allow for weaker forms of conditional dependence.
+\reviewresponse
+We thank the reviewer for this comment. We agree that the reward and the next state are often closely related, and that the original manuscript did not discuss this adequately. The Associate Editor raised the same issue, and our response to Major Comment~1 gives full details. We summarize the main changes here.
+\begin{itemize}
+    \item \textit{Separating the two parts of the assumption.} Assumption~3.1(iii) consists of two parts: $\widetilde A\independent (R,S')\mid (S,A)$ and $R\independent S'\mid (S,A)$. The first is the standard nondifferential error condition for misclassified variables. The second is where our framework is more restrictive than a standard MDP. We now state this explicitly in Section~3. We also explain that the second part holds when the reward is an immediate utility or cost of the current state and action, as in all three of our simulation designs and in classic-control environments such as Pendulum, and that it fails when the reward is a function of the next state.
+    \item \textit{An extension that allows the reward to depend on the next state.} Following the reviewer's suggestion, Proposition~C.1 in the revised Appendix establishes identification under a weaker condition. The record must still be nondifferential, but the reward and the next state need only supply two conditionally independent features. For example, these can be two blocks of state coordinates whose transition noises are independent. The reward may then depend on the next state in any way, including deterministically. Assumption~3.1(iii) is a special case. Under the weaker condition, the EM algorithm and the posterior-imputation estimator extend directly. Extending the multiply robust estimator and its theory requires new influence-function weights, which we note as future work.
+    \item \textit{Dependence between the record and the reward or next state.} Proposition~C.2 in the revised Appendix gives the bias of LURE under each type of violation: dependence between $R$ and $S'$, between $\widetilde A$ and $R$, and between $\widetilde A$ and $S'$. In each case, the bias is linear in the residual conditional covariance that the assumption sets to zero, divided by a proxy contrast. Small departures therefore produce small bias, and the bias is amplified when the action has a weak effect on the reward or the next state, or when the record is weakly informative. The formulas also give a simple sensitivity analysis, because a bound on the residual conditional correlation gives a bound on the bias. They also suggest choosing the proxy feature $l(S')$ to be weakly correlated with the reward.
+\end{itemize}
+
+\reviewcomment{Comment 3: Presentation} The manuscript would benefit from a careful pass. Some passages read as though they may have been heavily AI-assisted. Please revise the manuscript carefully to make the presentation more natural, concise, and consistent throughout.
+\reviewresponse
+
+
+\bibliographystyle{apalike}
+\bibliography{references}
+
+\end{document}

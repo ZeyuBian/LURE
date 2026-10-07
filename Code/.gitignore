@@ -1,0 +1,8 @@
+.DS_Store
+.Rhistory
+.Rapp.history
+.RData
+.Ruserdata
+.Rproj.user/
+sim_tabular_results.RData
+sim_tabular_plot.pdf
